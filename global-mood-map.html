@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Global Mood Index — Live</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" onerror="this.dataset.failed=1"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg:#0B1220; --panel:#121B2E; --panel-2:#17223A; --text:#E8EDF4; --muted:#7C8AA3; --line:#24304A;
+    --low:#C1443B; --mid:#E0A339; --high:#35B37E; --grid:#1B2740; --land:#141E33;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;height:100%;overflow:hidden;}
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  #splash{
+    position:fixed;inset:0;z-index:100;background:radial-gradient(circle at 50% 42%, #131f36 0%, #0B1220 70%);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+    transition:opacity .5s ease, visibility .5s ease;
+  }
+  #splash.hidden{opacity:0;visibility:hidden;pointer-events:none;}
+  #splash-globe{position:relative;width:84px;height:84px;}
+  #splash-globe .ring{position:absolute;inset:0;border-radius:50%;border:2px solid transparent;}
+  #splash-globe .r1{border-top-color:var(--high);border-right-color:var(--mid);animation:spin1 1.1s linear infinite;}
+  #splash-globe .r2{inset:14px;border-bottom-color:var(--low);border-left-color:var(--mid);animation:spin2 1.6s linear infinite;}
+  #splash-globe .dot-core{position:absolute;inset:32px;border-radius:50%;background:var(--panel-2);box-shadow:0 0 18px rgba(224,163,57,.35);}
+  @keyframes spin1{to{transform:rotate(360deg);}}
+  @keyframes spin2{to{transform:rotate(-360deg);}}
+  #status-spinner{display:none;width:12px;height:12px;margin-right:6px;flex-shrink:0;}
+  #status-spinner.spinning{display:inline-block;position:relative;}
+  #status-spinner.spinning::before, #status-spinner.spinning::after{
+    content:"";position:absolute;inset:0;border-radius:50%;border:1.6px solid transparent;
+  }
+  #status-spinner.spinning::before{border-top-color:var(--mid);border-right-color:var(--mid);animation:spin1 .8s linear infinite;}
+  #status-spinner.spinning::after{inset:2.5px;border-bottom-color:var(--high);animation:spin2 1.1s linear infinite;}
+  #splash-text{font-family:'Fraunces',serif;font-size:20px;font-weight:600;letter-spacing:.3px;color:var(--text);}
+  #splash-sub{font-size:12px;color:var(--muted);letter-spacing:.2px;}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;padding:20px 32px 12px 32px;border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap;gap:10px;}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:24px;margin:0;letter-spacing:.2px;}
+  h1 span{color:var(--muted);font-weight:300;font-style:italic;}
+  #subtitle{font-size:12px;color:var(--muted);margin-top:4px;max-width:560px;line-height:1.5;}
+  #status{font-size:11.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums;}
+  #status b{color:var(--text);display:flex;align-items:center;justify-content:flex-end;font-size:12.5px;font-weight:600;margin-bottom:2px;}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--mid);flex-shrink:0;}
+  .dot.live{background:var(--high);}
+  .dot.err{background:var(--low);}
+
+  #main{flex:1;display:flex;min-height:0;}
+  #map-wrap{flex:1;position:relative;min-width:0;}
+  svg#map{width:100%;height:100%;display:block;}
+
+  .country{stroke:var(--bg);stroke-width:.5px;cursor:pointer;transition:filter .15s ease;}
+  .country:hover{filter:brightness(1.35);}
+  .country.no-data{fill:#1A2338;cursor:default;}
+  .country.no-data:hover{filter:none;}
+  .country.selected{stroke:#fff;stroke-width:1.3px;}
+
+  .bubble{cursor:pointer;transition:opacity .15s ease, r .15s ease;stroke:rgba(255,255,255,.15);stroke-width:1px;}
+  .bubble:hover{opacity:0.85;}
+  .bubble.selected{stroke:#fff;stroke-width:2px;}
+  .bubble.pending{fill:#1A2338;}
+
+  #zoom-controls{position:absolute;right:32px;bottom:28px;display:flex;flex-direction:column;background:rgba(18,27,46,.88);border:1px solid var(--line);border-radius:12px;overflow:hidden;backdrop-filter:blur(6px);}
+  #zoom-controls button{width:36px;height:36px;background:transparent;border:none;color:var(--text);font-size:18px;cursor:pointer;line-height:1;}
+  #zoom-controls button:hover{background:var(--panel-2);}
+  #zoom-controls button:first-child{border-bottom:1px solid var(--line);}
+  #zoom-hint{position:absolute;right:32px;bottom:120px;font-size:10.5px;color:var(--muted);background:rgba(18,27,46,.7);padding:5px 10px;border-radius:8px;pointer-events:none;opacity:0;transition:opacity .3s ease;}
+
+  #legend{position:absolute;left:32px;bottom:28px;background:rgba(18,27,46,.88);border:1px solid var(--line);border-radius:14px;padding:14px 20px 12px 20px;backdrop-filter:blur(6px);}
+  #legend .lbl{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;}
+  #legend .note{font-size:10px;color:var(--muted);margin-top:6px;max-width:220px;line-height:1.4;}
+
+  #tooltip{position:absolute;pointer-events:none;background:#0d1526;border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:12.5px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.4);opacity:0;transition:opacity .1s ease;max-width:230px;z-index:10;}
+  #tooltip b{font-family:'Fraunces',serif;font-size:14px;font-weight:600;}
+  #tooltip .score{float:right;font-weight:700;}
+
+  #panel{width:340px;flex-shrink:0;border-left:1px solid var(--line);background:var(--panel);padding:26px 26px 20px 26px;overflow-y:auto;}
+  #panel::-webkit-scrollbar{width:6px;}
+  #panel::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+  .empty-state{color:var(--muted);font-size:13px;line-height:1.7;margin-top:50px;text-align:center;}
+  .empty-state .glyph{font-size:32px;display:block;margin-bottom:14px;opacity:.5;}
+
+  #panel h2{font-family:'Fraunces',serif;font-size:23px;margin:0 0 2px 0;font-weight:600;}
+  #panel .rank{color:var(--muted);font-size:11.5px;margin-bottom:16px;}
+  .score-num{font-family:'Fraunces',serif;font-size:40px;font-weight:700;line-height:1;}
+  .score-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-top:4px;margin-bottom:20px;}
+
+  .factor{margin-bottom:16px;}
+  .factor-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px;gap:8px;}
+  .factor-top .name{color:var(--text);font-weight:600;white-space:nowrap;}
+  .factor-top .val{color:var(--muted);text-align:right;}
+  .bar-track{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden;}
+  .bar-fill{height:100%;border-radius:3px;}
+  .factor-note{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5;}
+  .factor-note a{color:var(--mid);text-decoration:none;white-space:nowrap;}
+  .factor-note a:hover{text-decoration:underline;}
+
+  .divider{border:none;border-top:1px solid var(--line);margin:20px 0;}
+  #panel footer{font-size:10px;color:var(--muted);line-height:1.6;margin-top:8px;}
+
+  #retry{background:var(--panel-2);border:1px solid var(--line);color:var(--text);font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;margin-top:6px;}
+  #retry:hover{border-color:var(--mid);}
+
+  #rankings-toggle{background:var(--panel-2);border:1px solid var(--line);color:var(--text);font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;}
+  #rankings-toggle:hover{border-color:var(--mid);}
+  #rankings-toggle.active{background:var(--mid);border-color:var(--mid);color:#1a1030;font-weight:600;}
+
+  #rankings-panel{
+    width:300px;flex-shrink:0;border-right:1px solid var(--line);background:var(--panel);
+    display:flex;flex-direction:column;overflow:hidden;
+    max-width:0;transition:max-width .28s ease;
+  }
+  #rankings-panel.open{max-width:300px;}
+  #rankings-header{
+    display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px 18px;
+    font-family:'Fraunces',serif;font-size:15px;font-weight:600;border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  #rankings-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;padding:0 2px;}
+  #rankings-close:hover{color:var(--text);}
+  #rankings-list{flex:1;overflow-y:auto;padding:6px 0;white-space:nowrap;}
+  #rankings-list::-webkit-scrollbar{width:6px;}
+  #rankings-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+  .rank-row{
+    display:flex;align-items:center;gap:10px;padding:8px 18px;cursor:pointer;
+    border-left:3px solid transparent;transition:background .12s ease;
+  }
+  .rank-row:hover{background:var(--panel-2);}
+  .rank-row.selected{background:var(--panel-2);border-left-color:var(--mid);}
+  .rank-num{width:22px;flex-shrink:0;color:var(--muted);font-size:11px;text-align:right;}
+  .rank-swatch{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+  .rank-name{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;}
+  .rank-score{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;}
+  .rank-empty{padding:18px;font-size:12px;color:var(--muted);white-space:normal;line-height:1.6;}
+
+  #stuck-banner{position:absolute;top:16px;left:50%;transform:translateX(-50%);background:#1a1030;border:1px solid #7a5cff;border-radius:12px;padding:14px 18px;max-width:520px;font-size:12.5px;line-height:1.6;color:var(--text);display:none;z-index:20;box-shadow:0 12px 30px rgba(0,0,0,.5);}
+  #stuck-banner b{color:#c9b8ff;}
+  #stuck-banner button{background:var(--mid);border:none;color:#1a1030;font-weight:600;font-size:11.5px;padding:6px 14px;border-radius:7px;cursor:pointer;margin-top:10px;margin-right:8px;}
+
+  @media (max-width:860px){
+    #panel{position:absolute;right:0;top:0;bottom:0;z-index:6;box-shadow:-12px 0 30px rgba(0,0,0,.4);width:300px;}
+    header{padding:14px 16px 10px 16px;}
+    h1{font-size:19px;}
+    #subtitle{display:none;}
+    #legend{left:14px;bottom:14px;padding:10px 14px 10px 14px;}
+    #rankings-panel{position:absolute;left:0;top:0;bottom:0;z-index:6;max-width:0;box-shadow:12px 0 30px rgba(0,0,0,.4);}
+    #rankings-panel.open{max-width:280px;width:280px;}
+  }
+
+  /* Phone-width layout: stack the header, shrink chrome, and make both
+     side panels full-width slide-overs instead of fixed-width sidebars
+     so nothing gets clipped on a ~375-430px screen. */
+  @media (max-width:520px){
+    html,body{overflow:visible;height:auto;}
+    #app{height:auto;min-height:100vh;}
+
+    header{flex-direction:column;align-items:flex-start;padding:12px 14px 10px 14px;gap:4px;}
+    h1{font-size:17px;}
+    h1 span{display:block;font-size:13px;}
+    #status{text-align:left;width:100%;}
+    #status b{justify-content:flex-start;}
+    #status-sub{display:block;margin-top:2px;}
+    #status div{justify-content:flex-start !important;flex-wrap:wrap;}
+    #retry, #rankings-toggle{font-size:11px;padding:5px 10px;}
+
+    /* Stack map + both panels vertically instead of a side-by-side /
+       overlay layout — everything becomes normal document flow so the
+       whole page scrolls, rather than each panel floating over the map. */
+    #main{flex-direction:column;overflow:visible;height:auto;}
+    #map-wrap{order:1;flex:0 0 56vh;min-height:300px;width:100%;}
+
+    #panel{
+      order:2;position:static;width:100%;max-width:none;
+      box-shadow:none;border-left:none;border-top:1px solid var(--line);
+      padding:18px 16px 20px 16px;overflow-y:visible;
+    }
+
+    #rankings-panel{
+      order:3;position:static;width:100%;max-width:none;
+      max-height:0;overflow:hidden;border-right:none;border-top:1px solid var(--line);
+      transition:max-height .3s ease;
+    }
+    #rankings-panel.open{max-height:60vh;max-width:none;width:100%;overflow-y:auto;}
+    #rankings-header{padding:14px 16px 10px 16px;}
+    .rank-row{padding:8px 14px;}
+
+    #legend{left:10px;bottom:10px;padding:8px 12px 8px 12px;max-width:150px;}
+    #legend .note{max-width:130px;font-size:9px;}
+    #legend svg{transform:scale(0.85);transform-origin:left center;}
+
+    #zoom-controls{right:10px;bottom:10px;}
+    #zoom-controls button{width:32px;height:32px;font-size:16px;}
+    #zoom-hint{right:10px;bottom:90px;font-size:9.5px;padding:4px 8px;}
+
+    #stuck-banner{left:8px;right:8px;transform:none;max-width:none;top:10px;padding:12px 14px;font-size:11.5px;}
+
+    .score-num{font-size:32px;}
+    #splash-globe{width:64px;height:64px;}
+    #splash-text{font-size:17px;}
+  }
+</style>
+
+</head>
+<body>
+<div id="app">
+  <div id="splash">
+    <div id="splash-globe">
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="dot-core"></div>
+    </div>
+    <div id="splash-text">Almost there…</div>
+    <div id="splash-sub">Pulling live weather and news signals for the map</div>
+  </div>
+
+  <header>
+    <div>
+      <h1>Global Mood Index <span>— live</span></h1>
+      <div id="subtitle">World Happiness Report survey data as a baseline, adjusted by weather, news tone, and disasters — the full index is precomputed a few times a day, for ~155 tracked countries. Click a colored country for the breakdown.</div>
+    </div>
+    <div id="status">
+      <b><span id="status-spinner"></span><span class="dot" id="status-dot"></span><span id="status-text">Loading live data…</span></b>
+      <span id="status-sub">0 / 0 countries</span>
+      <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;">
+        <button id="retry" style="display:none;">Retry failed countries</button>
+        <button id="rankings-toggle">Rankings ▾</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="rankings-panel">
+      <div id="rankings-header">
+        <span>Countries by mood score</span>
+        <button id="rankings-close">&times;</button>
+      </div>
+      <div id="rankings-list"></div>
+    </div>
+    <div id="map-wrap">
+      <svg id="map"></svg>
+      <div id="legend">
+        <div class="lbl">Mood scale</div>
+        <svg id="legend-svg"></svg>
+        <div class="note">Wellbeing baseline (WHR survey) 50% · Weather 12% · Economic news 12% · Political news 12% · Recent disasters 14%.</div>
+      </div>
+      <div id="tooltip"></div>
+      <div id="zoom-controls">
+        <button id="zoom-in" title="Zoom in">+</button>
+        <button id="zoom-out" title="Zoom out">&minus;</button>
+      </div>
+      <div id="zoom-hint">Scroll or drag to explore · double‑click to reset</div>
+      <div id="stuck-banner">
+        <b>Live data isn't loading.</b> This usually happens when the file is opened directly (<code>file://</code>) — some browsers block or hang requests to external APIs from local files.<br><br>
+        Fix: serve this folder with a local server instead of double‑clicking the file, e.g. run <code>python3 -m http.server</code> in the folder and open <code>http://localhost:8000/global-mood-map.html</code>.<br><br>
+        Or, to see the app working right now with realistic placeholder data instead of live calls:
+        <div><button id="use-demo">Use demo data instead</button></div>
+      </div>
+    </div>
+
+    <div id="panel">
+      <div class="empty-state" id="empty-state">
+        <span class="glyph">&#9737;</span>
+        Select a bubble on the map to see the live weather and news‑sentiment breakdown behind that country's score.
+      </div>
+      <div id="detail" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------
+   COUNTRY SET — capital coords + GDELT sourcecountry FIPS code.
+   No external map-geometry file is used (that was the source
+   of the earlier "empty map" bug — this version draws directly
+   from these coordinates, so the map always renders).
+--------------------------------------------------------- */
+const COUNTRIES = [
+  {name:"United States", fips:"US", lat:38.9,  lon:-77.0},
+  {name:"Canada", fips:"CA", lat:45.4, lon:-75.7},
+  {name:"Mexico", fips:"MX", lat:19.4, lon:-99.1},
+  {name:"Guatemala", fips:"GT", lat:14.63, lon:-90.5},
+  {name:"Honduras", fips:"HO", lat:14.1, lon:-87.2},
+  {name:"El Salvador", fips:"ES", lat:13.7, lon:-89.2},
+  {name:"Nicaragua", fips:"NU", lat:12.1, lon:-86.25},
+  {name:"Costa Rica", fips:"CS", lat:9.93, lon:-84.08},
+  {name:"Panama", fips:"PM", lat:8.98, lon:-79.52},
+  {name:"Cuba", fips:"CU", lat:23.13, lon:-82.38},
+  {name:"Jamaica", fips:"JM", lat:18.0, lon:-76.8},
+  {name:"Dominican Rep.", fips:"DR", lat:18.48, lon:-69.9},
+  {name:"Trinidad and Tobago", fips:"TD", lat:10.65, lon:-61.5},
+  {name:"Brazil", fips:"BR", lat:-15.8, lon:-47.9},
+  {name:"Argentina", fips:"AR", lat:-34.6, lon:-58.4},
+  {name:"Chile", fips:"CI", lat:-33.4, lon:-70.6},
+  {name:"Colombia", fips:"CO", lat:4.7, lon:-74.1},
+  {name:"Peru", fips:"PE", lat:-12.0, lon:-77.0},
+  {name:"Uruguay", fips:"UY", lat:-34.9, lon:-56.16},
+  {name:"Paraguay", fips:"PA", lat:-25.3, lon:-57.63},
+  {name:"Bolivia", fips:"BL", lat:-16.5, lon:-68.15},
+  {name:"Ecuador", fips:"EC", lat:-0.23, lon:-78.52},
+  {name:"Venezuela", fips:"VE", lat:10.5, lon:-66.9},
+  {name:"Guyana", fips:"GY", lat:6.8, lon:-58.16},
+  {name:"Suriname", fips:"NS", lat:5.87, lon:-55.17},
+  {name:"United Kingdom", fips:"UK", lat:51.5, lon:-0.1},
+  {name:"France", fips:"FR", lat:48.85, lon:2.35},
+  {name:"Germany", fips:"GM", lat:52.5, lon:13.4},
+  {name:"Spain", fips:"SP", lat:40.4, lon:-3.7},
+  {name:"Italy", fips:"IT", lat:41.9, lon:12.5},
+  {name:"Portugal", fips:"PO", lat:38.7, lon:-9.1},
+  {name:"Netherlands", fips:"NL", lat:52.4, lon:4.9},
+  {name:"Belgium", fips:"BE", lat:50.85, lon:4.35},
+  {name:"Switzerland", fips:"SZ", lat:46.95, lon:7.45},
+  {name:"Austria", fips:"AU", lat:48.2, lon:16.37},
+  {name:"Sweden", fips:"SW", lat:59.3, lon:18.07},
+  {name:"Norway", fips:"NO", lat:59.9, lon:10.75},
+  {name:"Denmark", fips:"DA", lat:55.68, lon:12.57},
+  {name:"Finland", fips:"FI", lat:60.17, lon:24.94},
+  {name:"Iceland", fips:"IC", lat:64.15, lon:-21.94},
+  {name:"Poland", fips:"PL", lat:52.23, lon:21.0},
+  {name:"Ukraine", fips:"UP", lat:50.45, lon:30.52},
+  {name:"Russia", fips:"RS", lat:55.75, lon:37.6},
+  {name:"Greece", fips:"GR", lat:37.98, lon:23.73},
+  {name:"Turkey", fips:"TU", lat:39.9, lon:32.85},
+  {name:"Ireland", fips:"EI", lat:53.35, lon:-6.26},
+  {name:"Czechia", fips:"EZ", lat:50.08, lon:14.44},
+  {name:"Slovakia", fips:"LO", lat:48.15, lon:17.1},
+  {name:"Hungary", fips:"HU", lat:47.5, lon:19.05},
+  {name:"Romania", fips:"RO", lat:44.43, lon:26.1},
+  {name:"Bulgaria", fips:"BU", lat:42.7, lon:23.32},
+  {name:"Serbia", fips:"RI", lat:44.8, lon:20.47},
+  {name:"Croatia", fips:"HR", lat:45.8, lon:15.98},
+  {name:"Slovenia", fips:"SI", lat:46.05, lon:14.5},
+  {name:"Bosnia and Herz.", fips:"BK", lat:43.85, lon:18.35},
+  {name:"Albania", fips:"AL", lat:41.33, lon:19.82},
+  {name:"North Macedonia", fips:"MK", lat:42.0, lon:21.43},
+  {name:"Lithuania", fips:"LH", lat:54.68, lon:25.28},
+  {name:"Latvia", fips:"LG", lat:56.95, lon:24.1},
+  {name:"Estonia", fips:"EN", lat:59.44, lon:24.75},
+  {name:"Belarus", fips:"BO", lat:53.9, lon:27.57},
+  {name:"Moldova", fips:"MD", lat:47.02, lon:28.86},
+  {name:"Cyprus", fips:"CY", lat:35.17, lon:33.36},
+  {name:"Luxembourg", fips:"LU", lat:49.6, lon:6.13},
+  {name:"Egypt", fips:"EG", lat:30.04, lon:31.24},
+  {name:"Nigeria", fips:"NI", lat:9.08, lon:7.4},
+  {name:"South Africa", fips:"SF", lat:-25.75, lon:28.2},
+  {name:"Kenya", fips:"KE", lat:-1.3, lon:36.8},
+  {name:"Morocco", fips:"MO", lat:34.0, lon:-6.8},
+  {name:"Algeria", fips:"AG", lat:36.75, lon:3.05},
+  {name:"Tunisia", fips:"TS", lat:36.8, lon:10.18},
+  {name:"Libya", fips:"LY", lat:32.87, lon:13.19},
+  {name:"Ethiopia", fips:"ET", lat:9.03, lon:38.74},
+  {name:"Ghana", fips:"GH", lat:5.6, lon:-0.2},
+  {name:"Côte d'Ivoire", fips:"IV", lat:6.85, lon:-5.3},
+  {name:"Senegal", fips:"SG", lat:14.7, lon:-17.45},
+  {name:"Cameroon", fips:"CM", lat:3.85, lon:11.5},
+  {name:"Angola", fips:"AO", lat:-8.83, lon:13.23},
+  {name:"Zambia", fips:"ZA", lat:-15.4, lon:28.3},
+  {name:"Zimbabwe", fips:"ZI", lat:-17.83, lon:31.05},
+  {name:"Mozambique", fips:"MZ", lat:-25.97, lon:32.58},
+  {name:"Namibia", fips:"WA", lat:-22.57, lon:17.08},
+  {name:"Botswana", fips:"BC", lat:-24.65, lon:25.9},
+  {name:"Uganda", fips:"UG", lat:0.31, lon:32.58},
+  {name:"Tanzania", fips:"TZ", lat:-6.8, lon:39.28},
+  {name:"Saudi Arabia", fips:"SA", lat:24.7, lon:46.7},
+  {name:"United Arab Emirates", fips:"AE", lat:24.47, lon:54.37},
+  {name:"Israel", fips:"IS", lat:31.77, lon:35.2},
+  {name:"Iran", fips:"IR", lat:35.7, lon:51.4},
+  {name:"Iraq", fips:"IZ", lat:33.32, lon:44.36},
+  {name:"Jordan", fips:"JO", lat:31.95, lon:35.93},
+  {name:"Lebanon", fips:"LE", lat:33.89, lon:35.5},
+  {name:"Syria", fips:"SY", lat:33.5, lon:36.3},
+  {name:"Yemen", fips:"YM", lat:15.35, lon:44.2},
+  {name:"Oman", fips:"MU", lat:23.6, lon:58.4},
+  {name:"Qatar", fips:"QA", lat:25.29, lon:51.53},
+  {name:"Kuwait", fips:"KU", lat:29.37, lon:47.98},
+  {name:"Afghanistan", fips:"AF", lat:34.53, lon:69.17},
+  {name:"India", fips:"IN", lat:28.6, lon:77.2},
+  {name:"Pakistan", fips:"PK", lat:33.7, lon:73.1},
+  {name:"Bangladesh", fips:"BG", lat:23.8, lon:90.4},
+  {name:"Sri Lanka", fips:"CE", lat:6.93, lon:79.85},
+  {name:"Nepal", fips:"NP", lat:27.7, lon:85.3},
+  {name:"Myanmar", fips:"BM", lat:19.75, lon:96.1},
+  {name:"China", fips:"CH", lat:39.9, lon:116.4},
+  {name:"Mongolia", fips:"MG", lat:47.92, lon:106.92},
+  {name:"Japan", fips:"JA", lat:35.68, lon:139.76},
+  {name:"South Korea", fips:"KS", lat:37.57, lon:126.98},
+  {name:"North Korea", fips:"KN", lat:39.02, lon:125.75},
+  {name:"Taiwan", fips:"TW", lat:25.03, lon:121.56},
+  {name:"Indonesia", fips:"ID", lat:-6.2, lon:106.85},
+  {name:"Thailand", fips:"TH", lat:13.75, lon:100.5},
+  {name:"Vietnam", fips:"VM", lat:21.03, lon:105.85},
+  {name:"Cambodia", fips:"CB", lat:11.55, lon:104.92},
+  {name:"Laos", fips:"LA", lat:17.97, lon:102.6},
+  {name:"Philippines", fips:"RP", lat:14.6, lon:121.0},
+  {name:"Malaysia", fips:"MY", lat:3.14, lon:101.7},
+  {name:"Singapore", fips:"SN", lat:1.35, lon:103.82},
+  {name:"Australia", fips:"AS", lat:-35.28, lon:149.13},
+  {name:"New Zealand", fips:"NZ", lat:-41.29, lon:174.78},
+  {name:"Papua New Guinea", fips:"PP", lat:-9.48, lon:147.15},
+  {name:"Kazakhstan", fips:"KZ", lat:51.17, lon:71.43},
+
+  // Remaining African countries (rounding out the continent's coverage)
+  {name:"Benin", fips:"BN", lat:6.50, lon:2.60},
+  {name:"Burkina Faso", fips:"UV", lat:12.37, lon:-1.52},
+  {name:"Burundi", fips:"BY", lat:-3.43, lon:29.93},
+  {name:"Cabo Verde", fips:"CV", lat:14.93, lon:-23.51},
+  {name:"Central African Republic", fips:"CT", lat:4.37, lon:18.56},
+  {name:"Chad", fips:"CD", lat:12.13, lon:15.06},
+  {name:"Comoros", fips:"CN", lat:-11.70, lon:43.26},
+  {name:"Republic of the Congo", fips:"CF", lat:-4.26, lon:15.28},
+  {name:"Democratic Republic of the Congo", fips:"CG", lat:-4.44, lon:15.27},
+  {name:"Djibouti", fips:"DJ", lat:11.59, lon:43.15},
+  {name:"Equatorial Guinea", fips:"EK", lat:3.75, lon:8.78},
+  {name:"Eritrea", fips:"ER", lat:15.32, lon:38.93},
+  {name:"Eswatini", fips:"WZ", lat:-26.32, lon:31.13},
+  {name:"Gabon", fips:"GB", lat:0.42, lon:9.45},
+  {name:"Gambia", fips:"GA", lat:13.45, lon:-16.58},
+  {name:"Guinea", fips:"GV", lat:9.51, lon:-13.71},
+  {name:"Guinea-Bissau", fips:"PU", lat:11.86, lon:-15.60},
+  {name:"Lesotho", fips:"LT", lat:-29.31, lon:27.48},
+  {name:"Liberia", fips:"LI", lat:6.30, lon:-10.80},
+  {name:"Madagascar", fips:"MA", lat:-18.88, lon:47.51},
+  {name:"Malawi", fips:"MI", lat:-13.96, lon:33.79},
+  {name:"Mali", fips:"ML", lat:12.65, lon:-8.00},
+  {name:"Mauritania", fips:"MR", lat:18.09, lon:-15.98},
+  {name:"Mauritius", fips:"MP", lat:-20.16, lon:57.50},
+  {name:"Niger", fips:"NG", lat:13.51, lon:2.11},
+  {name:"Rwanda", fips:"RW", lat:-1.94, lon:30.06},
+  {name:"Sao Tome and Principe", fips:"TP", lat:0.33, lon:6.73},
+  {name:"Seychelles", fips:"SE", lat:-4.62, lon:55.45},
+  {name:"Sierra Leone", fips:"SL", lat:8.48, lon:-13.23},
+  {name:"Somalia", fips:"SO", lat:2.04, lon:45.34},
+  {name:"South Sudan", fips:"OD", lat:4.85, lon:31.58},
+  {name:"Sudan", fips:"SU", lat:15.50, lon:32.56},
+  {name:"Togo", fips:"TO", lat:6.13, lon:1.22},
+];
+
+// ---------------------------------------------------------------
+// HISTORICAL BASELINE — World Happiness Report (Gallup World Poll),
+// most recent published editions (~2024/2025), life-evaluation score
+// on a 0–10 scale. This anchors each country to its actual measured
+// wellbeing so a sunny afternoon in a struggling country can't outrank
+// a rough day in a genuinely happy one — live weather/news are treated
+// as day-to-day *adjustments* around this baseline, not the whole score.
+// Figures compiled from published WHR rankings; countries the report
+// doesn't individually cover fall back to a global-average estimate
+// (flagged "estimated", not "reported", in the detail panel).
+// ---------------------------------------------------------------
+const WHR_BASELINE = {
+  "Finland":7.74,"Denmark":7.58,"Iceland":7.53,"Sweden":7.34,"Israel":7.34,
+  "Netherlands":7.31,"Norway":7.30,"Luxembourg":7.12,"Switzerland":7.06,
+  "Australia":7.06,"New Zealand":7.03,"Costa Rica":6.94,"Austria":6.96,
+  "Canada":6.90,"Ireland":6.83,"Belgium":6.86,"United Kingdom":6.72,
+  "Germany":6.72,"United States":6.72,"Mexico":6.90,"United Arab Emirates":6.73,
+  "France":6.66,"Czechia":6.85,"Slovenia":6.61,"Taiwan":6.53,"Singapore":6.52,
+  "Kuwait":6.58,"Saudi Arabia":6.49,"El Salvador":6.49,"Spain":6.42,"Italy":6.41,
+  "Uruguay":6.68,"Panama":6.26,"Guatemala":6.19,"Nicaragua":6.14,"Chile":6.38,
+  "Vietnam":6.05,"Kazakhstan":6.06,"Romania":6.36,"Serbia":6.30,"Poland":6.32,
+  "Brazil":6.29,"Malaysia":6.10,"Argentina":6.24,"Thailand":5.98,"Qatar":6.60,
+  "Oman":6.00,"China":5.97,"Japan":6.13,"South Korea":5.90,"Philippines":5.90,
+  "Indonesia":5.60,"Bulgaria":5.63,"Greece":5.72,"Russia":5.66,"Bolivia":5.65,
+  "Paraguay":5.87,"Honduras":5.84,"Jamaica":5.89,"Dominican Rep.":5.80,
+  "Trinidad and Tobago":5.90,"Colombia":5.63,"Peru":5.55,"Ecuador":5.55,
+  "Namibia":5.20,"Algeria":5.20,"Morocco":5.06,"Ghana":5.03,"Côte d'Ivoire":5.29,
+  "Nepal":5.10,"Botswana":4.50,"Venezuela":5.17,"Libya":5.40,"Turkey":5.24,
+  "Jordan":4.90,"Cameroon":4.60,"Senegal":4.90,"Iran":4.70,"Iraq":4.60,
+  "Tunisia":4.70,"Myanmar":4.40,"Cambodia":4.40,"Laos":4.50,"Pakistan":4.65,
+  "Kenya":4.60,"Nigeria":4.85,"Uganda":4.30,"Egypt":4.28,"South Africa":4.92,
+  "India":4.05,"Sri Lanka":3.90,"Angola":4.36,"Ethiopia":4.00,"Zambia":4.03,
+  "Bangladesh":3.85,"Tanzania":3.70,"Mozambique":4.00,"Syria":3.50,"Yemen":3.60,
+  "Zimbabwe":3.30,"Lebanon":3.19,"Afghanistan":1.72,
+  "Benin":4.40,"Burkina Faso":4.38,"Burundi":3.55,"Cabo Verde":5.87,
+  "Central African Republic":3.48,"Chad":4.40,"Comoros":4.28,
+  "Republic of the Congo":4.80,"Democratic Republic of the Congo":4.32,
+  "Djibouti":4.50,"Equatorial Guinea":5.00,"Eritrea":4.50,"Eswatini":4.40,
+  "Gabon":5.40,"Gambia":4.64,"Guinea":4.63,"Guinea-Bissau":4.60,
+  "Lesotho":3.65,"Liberia":4.63,"Madagascar":4.00,"Malawi":3.75,
+  "Mali":4.40,"Mauritania":5.19,"Mauritius":6.00,"Niger":4.35,
+  "Rwanda":3.35,"Sao Tome and Principe":4.80,"Seychelles":6.10,
+  "Sierra Leone":4.50,"Somalia":4.00,"South Sudan":2.80,"Sudan":3.80,
+  "Togo":4.55,
+};
+function baselineFor(name){
+  if(WHR_BASELINE[name] !== undefined) return {score: WHR_BASELINE[name], reported:true};
+  return {score: 5.3, reported:false}; // global-average fallback for countries WHR doesn't individually list
+}
+
+// A few world-atlas map labels differ from common short names our list
+// uses; this lets the fill-color lookup succeed either way.
+const GEO_LABEL_ALIASES = {
+  "Czech Rep.":"Czechia",
+  "Dominican Rep.":"Dominican Republic",
+  "Bosnia and Herz.":"Bosnia and Herzegovina",
+  "Central African Rep.":"Central African Republic",
+  "Dem. Rep. Congo":"Democratic Republic of the Congo",
+  "Congo":"Republic of the Congo",
+  "S. Sudan":"South Sudan",
+  "eSwatini":"Eswatini",
+  "Solomon Is.":"Solomon Islands",
+  "Korea":"South Korea",
+};
+
+/* ---------------------------------------------------------
+   WEATHER — Open-Meteo, free, no API key, CORS-enabled.
+--------------------------------------------------------- */
+function fetchWithTimeout(url, ms){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, {signal: controller.signal}).finally(() => clearTimeout(timer));
+}
+
+// ---------------------------------------------------------------
+// DISASTERS — combines two free, no-key APIs, fetched once globally
+// (not per-country) and matched to our tracked countries, blended into
+// the composite score as a recency-weighted "recent disaster impact"
+// factor: USGS Earthquake API (earthquakes + tsunami-warning flag) and
+// GDACS (tropical cyclones, floods, volcanic activity, wildfires).
+//
+// Known gap: there's no reliable free *global* API for tornadoes
+// specifically (NOAA's storm data is US-only), so tornadoes aren't
+// included — everything else GDACS + USGS cover is.
+// ---------------------------------------------------------------
+// POPULATION — embedded directly (approximate, most recent published UN/
+// national estimates) rather than fetched live. Population doesn't change
+// meaningfully day-to-day, so there's no real benefit to a live API call —
+// and it removes one more thing that can fail on a restrictive network.
+// Shown as information in the detail panel — it doesn't affect the score.
+// ---------------------------------------------------------------
+const populationByCountry = {
+  "United States":335000000,"Canada":39000000,"Mexico":128000000,"Guatemala":18000000,
+  "Honduras":10000000,"El Salvador":6300000,"Nicaragua":6900000,"Costa Rica":5200000,
+  "Panama":4400000,"Cuba":11000000,"Jamaica":2800000,"Dominican Rep.":11300000,
+  "Trinidad and Tobago":1500000,"Brazil":216000000,"Argentina":46000000,"Chile":19500000,
+  "Colombia":52000000,"Peru":34000000,"Uruguay":3400000,"Paraguay":6800000,
+  "Bolivia":12200000,"Ecuador":18000000,"Venezuela":28000000,"Guyana":800000,
+  "Suriname":620000,"United Kingdom":68000000,"France":68000000,"Germany":84000000,
+  "Spain":47500000,"Italy":59000000,"Portugal":10300000,"Netherlands":17900000,
+  "Belgium":11700000,"Switzerland":8800000,"Austria":9100000,"Sweden":10500000,
+  "Norway":5500000,"Denmark":5900000,"Finland":5600000,"Iceland":390000,
+  "Poland":37700000,"Ukraine":36000000,"Russia":144000000,"Greece":10400000,
+  "Turkey":85000000,"Ireland":5100000,"Czechia":10900000,"Slovakia":5400000,
+  "Hungary":9600000,"Romania":19000000,"Bulgaria":6800000,"Serbia":6600000,
+  "Croatia":3900000,"Slovenia":2100000,"Bosnia and Herz.":3200000,"Albania":2800000,
+  "North Macedonia":1800000,"Lithuania":2700000,"Latvia":1800000,"Estonia":1330000,
+  "Belarus":9200000,"Moldova":2500000,"Cyprus":1250000,"Luxembourg":660000,
+  "Egypt":112000000,"Nigeria":227000000,"South Africa":60000000,"Kenya":55000000,
+  "Morocco":37500000,"Algeria":45000000,"Tunisia":12000000,"Libya":6900000,
+  "Ethiopia":126000000,"Ghana":33000000,"Côte d'Ivoire":29000000,"Senegal":18000000,
+  "Cameroon":28000000,"Angola":36000000,"Zambia":20000000,"Zimbabwe":16000000,
+  "Mozambique":33000000,"Namibia":2600000,"Botswana":2600000,"Uganda":48000000,
+  "Tanzania":67000000,"Saudi Arabia":36000000,"United Arab Emirates":9900000,
+  "Israel":9400000,"Iran":89000000,"Iraq":44000000,"Jordan":11300000,"Lebanon":5400000,
+  "Syria":22000000,"Yemen":34000000,"Oman":4600000,"Qatar":2700000,"Kuwait":4300000,
+  "Afghanistan":42000000,"India":1428000000,"Pakistan":240000000,"Bangladesh":173000000,
+  "Sri Lanka":22000000,"Nepal":30000000,"Myanmar":54000000,"China":1410000000,
+  "Mongolia":3400000,"Japan":124000000,"South Korea":51700000,"North Korea":26000000,
+  "Taiwan":23500000,"Indonesia":277000000,"Thailand":71000000,"Vietnam":99000000,
+  "Cambodia":17000000,"Laos":7600000,"Philippines":117000000,"Malaysia":34000000,
+  "Singapore":5900000,"Australia":26500000,"New Zealand":5200000,"Papua New Guinea":10300000,
+  "Kazakhstan":19800000,"Benin":13700000,"Burkina Faso":23000000,"Burundi":13200000,
+  "Cabo Verde":590000,"Central African Republic":5700000,"Chad":18500000,"Comoros":850000,
+  "Republic of the Congo":5900000,"Democratic Republic of the Congo":102000000,
+  "Djibouti":1100000,"Equatorial Guinea":1700000,"Eritrea":3700000,"Eswatini":1200000,
+  "Gabon":2400000,"Gambia":2700000,"Guinea":14000000,"Guinea-Bissau":2100000,
+  "Lesotho":2300000,"Liberia":5400000,"Madagascar":30000000,"Malawi":20700000,
+  "Mali":23300000,"Mauritania":4900000,"Mauritius":1270000,"Niger":27000000,
+  "Rwanda":14100000,"Sao Tome and Principe":230000,"Seychelles":100000,
+  "Sierra Leone":8600000,"Somalia":18100000,"South Sudan":11100000,"Sudan":48000000,
+  "Togo":8800000,
+};
+
+function formatPopulation(n){
+  if(n === undefined) return null;
+  if(n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if(n >= 1e6) return (n/1e6).toFixed(1) + "M";
+  if(n >= 1e3) return (n/1e3).toFixed(0) + "K";
+  return String(n);
+}
+
+let disasterByCountry = {}; // name -> {severity 0..1 (0=none), quakes:[...]}
+let disastersReady = false;
+
+function haversineKm(lat1, lon1, lat2, lon2){
+  const R = 6371, toRad = d => d*Math.PI/180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+// Your private Worker also proxies GDACS (broadened alongside GDELT — see
+// the updated gdelt-proxy-worker.js). GDACS covers tropical cyclones (TC),
+// floods (FL), volcanoes (VO), and wildfires (WF); USGS remains the source
+// for earthquakes (EQ) and tsunami flags, since it's already reliable direct.
+const GDACS_HAZARD_LABELS = {TC:"Tropical cyclone", FL:"Flood", VO:"Volcanic activity", WF:"Wildfire"};
+
+async function fetchGlobalDisasters(){
+  const now = Date.now();
+
+  // --- Earthquakes + tsunamis (USGS, direct — already reliable) ---
+  try{
+    const url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson";
+    const res = await fetchWithTimeout(url, 8000);
+    if(!res.ok) throw new Error("usgs http " + res.status);
+    const data = await res.json();
+
+    (data.features || []).forEach(f => {
+      const place = (f.properties.place || "").toLowerCase();
+      const mag = f.properties.mag || 0;
+      const tsunami = f.properties.tsunami === 1;
+      const timeMs = f.properties.time || now;
+      const [lon, lat] = f.geometry.coordinates;
+      const daysAgo = (now - timeMs) / 86400000;
+      if(daysAgo > 30 || daysAgo < 0) return;
+
+      let matched = COUNTRIES.find(c => place.includes(c.name.toLowerCase()));
+      if(!matched){
+        let best = null, bestDist = 700;
+        for(const c of COUNTRIES){
+          const d = haversineKm(lat, lon, c.lat, c.lon);
+          if(d < bestDist){ bestDist = d; best = c; }
+        }
+        matched = best;
+      }
+      if(!matched) return;
+
+      const recency = Math.max(0, 1 - daysAgo/30);
+      const magWeight = Math.max(0, Math.min(1, (mag - 4.5) / 3.5));
+      const severity = magWeight * (0.55 + recency*0.45) + (tsunami ? 0.25 : 0);
+
+      addDisasterEvent(matched.name, severity, {
+        kind:"EQ", label: `M${mag.toFixed(1)} earthquake${tsunami ? " (tsunami warning)" : ""}`,
+        place: f.properties.place, daysAgo: Math.round(daysAgo), url: f.properties.url,
+      });
+    });
+  }catch(e){
+    console.warn("[disasters] USGS earthquake feed unavailable:", e.message || e);
+  }
+
+  // --- Storms, floods, volcanoes, wildfires (GDACS, via private Worker) ---
+  try{
+    const fromDate = new Date(now - 30*86400000).toISOString().slice(0,10);
+    const toDate = new Date(now).toISOString().slice(0,10);
+    const gdacsUrl = `https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC;FL;VO;WF&fromdate=${fromDate}&todate=${toDate}&alertlevel=orange;red`;
+    const proxied = GDELT_WORKER_URL + "?url=" + encodeURIComponent(gdacsUrl);
+    const res = await fetchWithTimeout(proxied, 8000);
+    if(!res.ok) throw new Error("gdacs http " + res.status);
+    const data = await res.json();
+
+    (data.features || []).forEach(f => {
+      const p = f.properties || {};
+      const kind = p.eventtype;
+      const label = GDACS_HAZARD_LABELS[kind];
+      if(!label) return;
+      const countryText = (p.country || p.iso3 || "").toString();
+      const fromDateMs = Date.parse(p.fromdate || p.todate || now);
+      const daysAgo = Math.max(0, (now - fromDateMs) / 86400000);
+      if(daysAgo > 30) return;
+
+      // GDACS gives country names/codes directly, so match by substring
+      // rather than distance — much more precise than the earthquake path.
+      const lowerCountryText = countryText.toLowerCase();
+      const matches = COUNTRIES.filter(c => lowerCountryText.includes(c.name.toLowerCase()));
+      if(!matches.length) return;
+
+      const alertWeight = {green:0.3, orange:0.65, red:1.0}[(p.alertlevel||"").toLowerCase()] || 0.5;
+      const recency = Math.max(0, 1 - daysAgo/30);
+      const severity = alertWeight * (0.55 + recency*0.45);
+
+      matches.forEach(c => addDisasterEvent(c.name, severity, {
+        kind, label: `${label}${p.alertlevel ? " (" + p.alertlevel + " alert)" : ""}`,
+        place: p.eventname || p.country || label, daysAgo: Math.round(daysAgo),
+        url: `https://www.gdacs.org/report.aspx?eventid=${p.eventid}&eventtype=${kind}`,
+      }));
+    });
+  }catch(e){
+    console.warn("[disasters] GDACS multi-hazard feed unavailable:", e.message || e);
+  }
+
+  disastersReady = true;
+}
+
+function addDisasterEvent(countryName, severity, eventDetail){
+  const entry = disasterByCountry[countryName] || {severity:0, events:[]};
+  entry.severity = Math.min(1, entry.severity + severity*0.6); // diminishing stack for multiple events
+  entry.events.push(eventDetail);
+  disasterByCountry[countryName] = entry;
+}
+
+function disasterFor(name){
+  const entry = disasterByCountry[name];
+  if(!entry) return {mood: 1, events: []};
+  entry.events.sort((a,b) => a.daysAgo - b.daysAgo);
+  return {mood: 1 - entry.severity, events: entry.events.slice(0,4)};
+}
+
+async function fetchWeather(c){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}&current_weather=true`;
+  const res = await fetchWithTimeout(url, 8000);
+  if(!res.ok) throw new Error("weather http " + res.status);
+  const data = await res.json();
+  const cw = data.current_weather;
+  const temp = cw.temperature;
+  const code = cw.weathercode;
+  const codeMap = {
+    0:["Clear sky",0.85], 1:["Mainly clear",0.78], 2:["Partly cloudy",0.62], 3:["Overcast",0.45],
+    45:["Fog",0.4], 48:["Rime fog",0.38],
+    51:["Light drizzle",0.5], 53:["Drizzle",0.45], 55:["Dense drizzle",0.4],
+    61:["Light rain",0.42], 63:["Rain",0.35], 65:["Heavy rain",0.22],
+    71:["Light snow",0.5], 73:["Snow",0.42], 75:["Heavy snow",0.3],
+    80:["Rain showers",0.4], 81:["Rain showers",0.35], 82:["Violent showers",0.18],
+    95:["Thunderstorm",0.2], 96:["Thunderstorm w/ hail",0.15], 99:["Severe thunderstorm",0.12],
+  };
+  let [label, condMood] = codeMap[code] || ["Mixed conditions",0.5];
+  let tempMood;
+  if(temp < -10) tempMood = 0.15;
+  else if(temp < 0) tempMood = 0.3;
+  else if(temp < 10) tempMood = 0.5;
+  else if(temp < 18) tempMood = 0.7;
+  else if(temp <= 24) tempMood = 0.9;
+  else if(temp <= 30) tempMood = 0.65;
+  else if(temp <= 36) tempMood = 0.4;
+  else tempMood = 0.2;
+  const mood = condMood*0.6 + tempMood*0.4;
+  return {label, tempC: Math.round(temp), mood, sourceUrl: url};
+}
+
+/* ---------------------------------------------------------
+   NEWS SENTIMENT — GDELT DOC 2.0 API, free, no key, CORS "*".
+--------------------------------------------------------- */
+// GDELT itself and generic proxies both time out on some networks, but
+// corsproxy.io reliably connects — the problem there was volume, not
+// reachability (~220 simultaneous requests triggered 429 rate limits).
+// This queue caps how many corsproxy requests are in flight at once.
+// Your private Cloudflare Worker (only this app calls it), so it's never
+// rate-limited or blocked by other people's traffic the way public proxies
+// (corsproxy.io, allorigins.win) are. This is now the primary path.
+const GDELT_WORKER_URL = "https://gdelt-proxy.plam-stan.workers.dev/";
+
+const GDELT_MAX_CONCURRENT = 4;
+let gdeltActive = 0;
+const gdeltQueue = [];
+function withGdeltLimit(fn){
+  return new Promise((resolve, reject) => {
+    const task = () => {
+      gdeltActive++;
+      fn().then(v => { gdeltActive--; pumpGdeltQueue(); resolve(v); },
+                e => { gdeltActive--; pumpGdeltQueue(); reject(e); });
+    };
+    gdeltQueue.push(task);
+    pumpGdeltQueue();
+  });
+}
+function pumpGdeltQueue(){
+  while(gdeltActive < GDELT_MAX_CONCURRENT && gdeltQueue.length){
+    gdeltQueue.shift()();
+  }
+}
+
+async function fetchTone(fips, topicWords){
+  const q = encodeURIComponent(`(${topicWords}) sourcecountry:${fips}`);
+  const directUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=timelinetone&format=json&timespan=3d`;
+  // A human-browsable page of the actual underlying articles (not the raw
+  // timeline-tone API call above) — same query, GDELT's own HTML article list.
+  const articlesUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=artlist&format=html&maxrecords=15&timespan=3d`;
+
+  const attempts = [
+    {label:"private worker", url: GDELT_WORKER_URL + "?url=" + encodeURIComponent(directUrl), timeout: 20000, queued:true},
+    {label:"direct", url: directUrl, timeout: 3000},
+    {label:"allorigins proxy", url: "https://api.allorigins.win/raw?url=" + encodeURIComponent(directUrl), timeout: 4000},
+    {label:"corsproxy.io", url: "https://corsproxy.io/?url=" + encodeURIComponent(directUrl), timeout: 4000},
+  ];
+
+  for(const attempt of attempts){
+    try{
+      const run = () => fetchToneFrom(attempt.url, attempt.timeout);
+      const result = await (attempt.queued ? withGdeltLimit(run) : run());
+      if(result) result.articlesUrl = articlesUrl;
+      return result;
+    }catch(e){
+      console.warn(`[news tone] ${attempt.label} failed for ${fips} (${topicWords.slice(0,20)}...):`, e.message || e);
+    }
+  }
+  return null;
+}
+
+async function fetchToneFrom(url, timeoutMs){
+  let res = await fetchWithTimeout(url, timeoutMs);
+  if(res.status === 429){
+    // Back off briefly and retry once before giving up on this source.
+    await new Promise(r => setTimeout(r, 900 + Math.random()*600));
+    res = await fetchWithTimeout(url, timeoutMs);
+  }
+  if(!res.ok) throw new Error("http " + res.status);
+  const raw = await res.text();
+  let data;
+  try{ data = JSON.parse(raw); }
+  catch(e){ throw new Error("non-JSON response (likely blocked/redirected): " + raw.slice(0,80)); }
+  const series = data && data.timeline && data.timeline[0] && data.timeline[0].data;
+  if(!series || !series.length) throw new Error("empty timeline series");
+  const last = series.slice(-4);
+  const avgTone = last.reduce((s,p)=>s+p.value,0) / last.length;
+  const mood = Math.max(0, Math.min(1, (avgTone + 6) / 12));
+  return {tone: avgTone, mood};
+}
+
+function toneLabel(mood){
+  if(mood > 0.68) return "Strongly positive coverage";
+  if(mood > 0.55) return "Mildly positive coverage";
+  if(mood > 0.45) return "Neutral / mixed coverage";
+  if(mood > 0.32) return "Mildly negative coverage";
+  return "Strongly negative coverage";
+}
+
+function moodColor(score){
+  const low = d3.hsl("#C1443B"), mid = d3.hsl("#E0A339"), high = d3.hsl("#35B37E");
+  if(score < 0.5) return d3.interpolateHsl(low, mid)(score/0.5);
+  return d3.interpolateHsl(mid, high)((score-0.5)/0.5);
+}
+
+/* ---------------------------------------------------------
+   MAP — bubble map on a built-in graticule, no external file.
+--------------------------------------------------------- */
+const svg = d3.select("#map");
+const tooltip = d3.select("#tooltip");
+let width, height, projection, path, g, zoomBehavior;
+const results = {};
+let loadedCount = 0, errorCount = 0, failedList = [], newsUnavailable = false;
+let worldFeatures = null; // set once topojson loads; null = bubble fallback
+
+/* ---------------------------------------------------------
+   NEWS/DISASTER CACHE — GDELT and GDACS are the two fragile,
+   proxy-dependent data sources. Re-fetching all 155 countries'
+   worth of news tone on every single page load hammers the
+   private Worker and likely contributes to it getting rate-
+   limited or timing out. Instead: fetch fresh once, cache in
+   localStorage for an hour, and reuse the cache on reload within
+   that window. While the tab stays open, a timer refreshes it
+   every hour automatically. Weather stays live on every load —
+   it's fast, reliable, and genuinely time-sensitive.
+--------------------------------------------------------- */
+const CACHE_KEY = "moodmap-news-disaster-cache-v2"; // v2: v1 could cache failed/unavailable news data
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+let newsCache = null; // {savedAt, news:{name:{econ,pol}}, disasters:{...}} or null
+
+function loadCacheFromStorage(){
+  try{
+    const raw = localStorage.getItem(CACHE_KEY);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || !parsed.savedAt) return null;
+    if(Date.now() - parsed.savedAt > CACHE_TTL_MS) return null; // stale
+    return parsed;
+  }catch(e){
+    console.warn("[cache] couldn't read cached news/disaster data:", e.message || e);
+    return null;
+  }
+}
+
+function saveCacheToStorage(){
+  try{
+    const news = {};
+    let successCount = 0;
+    Object.entries(results).forEach(([name, r]) => {
+      // Only cache genuinely successful fetches. Caching a failure would mean
+      // that country stays stuck showing "unavailable" for the full hour
+      // even once whatever was blocking it gets fixed.
+      if(!r.econ.unavailable && !r.pol.unavailable){
+        news[name] = {econ: r.econ, pol: r.pol};
+        successCount++;
+      }
+    });
+    if(successCount === 0){
+      // Nothing worth caching — don't overwrite any existing (possibly still
+      // valid) cache with an empty one, and don't create a cache that would
+      // just make the next load skip retrying entirely.
+      console.warn("[cache] no successful news fetches this cycle — not caching, will retry fresh next time.");
+      return;
+    }
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      savedAt: Date.now(), news, disasters: disasterByCountry,
+    }));
+    console.log(`[cache] saved ${successCount}/${Object.keys(results).length} countries' news data.`);
+  }catch(e){
+    console.warn("[cache] couldn't save news/disaster data (localStorage full or blocked):", e.message || e);
+  }
+}
+
+// Map our country list's names to the names used in the world-atlas topojson,
+// so results (keyed by our list) can color the right polygon.
+const GEO_NAME_MAP = {
+  "United States":"United States of America",
+  "Dominican Rep.":"Dominican Republic",
+  "Bosnia and Herz.":"Bosnia and Herzegovina",
+  "Côte d'Ivoire":"Côte d'Ivoire",
+};
+function geoNameFor(ourName){ return GEO_NAME_MAP[ourName] || ourName; }
+const resultsByGeoName = {}; // populated as results come in, keyed by the
+                              // *map's* label (see GEO_LABEL_ALIASES lookup
+                              // applied when reading, for the reverse case).
+function lookupResultForGeoFeature(mapLabel){
+  return resultsByGeoName[mapLabel]
+      || resultsByGeoName[GEO_LABEL_ALIASES[mapLabel]]
+      || null;
+}
+
+function sizeMap(){
+  const wrap = document.getElementById('map-wrap');
+  width = wrap.clientWidth; height = wrap.clientHeight;
+  svg.attr("viewBox", [0,0,width,height]);
+  projection = d3.geoNaturalEarth1().fitExtent([[10,10],[width-10,height-10]], {type:"Sphere"});
+  path = d3.geoPath(projection);
+  draw();
+}
+
+const graticule = d3.geoGraticule10();
+
+function draw(){
+  svg.selectAll("*").remove();
+  const zoomLayer = svg.append("g").attr("id", "zoom-layer");
+  g = zoomLayer.append("g");
+
+  g.append("path").datum({type:"Sphere"}).attr("d", path)
+    .attr("fill", "var(--land)").attr("stroke", "var(--line)").attr("stroke-width", 1);
+  g.append("path").datum(graticule).attr("d", path)
+    .attr("fill", "none").attr("stroke", "var(--grid)").attr("stroke-width", 0.6);
+
+  if(worldFeatures){
+    drawCountries();
+  } else {
+    drawBubbles();
+  }
+
+  zoomBehavior = d3.zoom()
+    .scaleExtent([1, 12])
+    .translateExtent([[0,0],[width,height]])
+    .on("zoom", (event) => {
+      zoomLayer.attr("transform", event.transform);
+      zoomLayer.selectAll(".country, .bubble")
+        .attr("vector-effect", "non-scaling-stroke");
+    });
+  svg.call(zoomBehavior)
+     .on("dblclick.zoom", null)
+     .on("dblclick", () => svg.transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity));
+
+  const hint = document.getElementById('zoom-hint');
+  hint.style.opacity = 1;
+  setTimeout(() => hint.style.opacity = 0, 3500);
+}
+
+function drawCountries(){
+  g.selectAll("circle.bubble").remove();
+  g.selectAll("path.country")
+    .data(worldFeatures)
+    .join("path")
+    .attr("class", d => "country " + (lookupResultForGeoFeature(d.properties.name) ? "" : "no-data"))
+    .attr("d", path)
+    .attr("fill", d => {
+      const r = lookupResultForGeoFeature(d.properties.name);
+      return r ? moodColor(r.score) : "#1A2338";
+    })
+    .on("mousemove", (event, d) => showTooltip(event, d.properties.name, lookupResultForGeoFeature(d.properties.name)))
+    .on("mouseleave", () => tooltip.style("opacity",0))
+    .on("click", (event, d) => {
+      const r = lookupResultForGeoFeature(d.properties.name);
+      if(r) selectCountry({name:d.properties.name}, r, "country");
+    });
+}
+
+function bubbleRadius(hasData){
+  const w = width || 900;
+  const base = Math.max(5, Math.min(11, w/95));
+  return hasData ? base : base*0.5;
+}
+
+function drawBubbles(){
+  g.selectAll("path.country").remove();
+  g.selectAll("circle.bubble")
+    .data(COUNTRIES, d => d.name)
+    .join("circle")
+    .attr("class", d => "bubble " + (results[d.name] ? "" : "pending"))
+    .attr("cx", d => { const p = projection([d.lon, d.lat]); return p ? p[0] : -100; })
+    .attr("cy", d => { const p = projection([d.lon, d.lat]); return p ? p[1] : -100; })
+    .attr("r", d => bubbleRadius(!!results[d.name]))
+    .attr("fill", d => results[d.name] ? moodColor(results[d.name].score) : "#2A3654")
+    .on("mousemove", (event, d) => showTooltip(event, d.name, results[d.name]))
+    .on("mouseleave", () => tooltip.style("opacity",0))
+    .on("click", (event, d) => { if(results[d.name]) selectCountry(d, results[d.name], "bubble"); });
+}
+
+function refreshMapData(){
+  if(worldFeatures) drawCountries(); else drawBubbles();
+  renderRankings();
+}
+
+let rankingsOpen = false;
+let selectedCountryName = null;
+
+function renderRankings(){
+  const list = document.getElementById('rankings-list');
+  const entries = Object.entries(results);
+  if(!entries.length){
+    list.innerHTML = `<div class="rank-empty">No countries have loaded yet — this list fills in as live data arrives.</div>`;
+    return;
+  }
+  entries.sort((a,b) => b[1].score - a[1].score);
+  list.innerHTML = entries.map(([name, r], i) => `
+    <div class="rank-row${name===selectedCountryName ? ' selected' : ''}" data-name="${name}">
+      <span class="rank-num">${i+1}</span>
+      <span class="rank-swatch" style="background:${moodColor(r.score)}"></span>
+      <span class="rank-name">${name}</span>
+      <span class="rank-score" style="color:${moodColor(r.score)}">${(r.score*10).toFixed(1)}</span>
+    </div>
+  `).join('');
+  list.querySelectorAll('.rank-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const name = row.dataset.name;
+      const r = results[name];
+      if(!r) return;
+      const geoName = geoNameFor(name);
+      // selectCountry tracks selection + re-renders this list itself, so a
+      // click here stays in sync with map clicks automatically.
+      selectCountry({name: worldFeatures ? geoName : name}, r, worldFeatures ? "country" : "bubble");
+    });
+  });
+}
+
+function toggleRankings(open){
+  rankingsOpen = open !== undefined ? open : !rankingsOpen;
+  document.getElementById('rankings-panel').classList.toggle('open', rankingsOpen);
+  document.getElementById('rankings-toggle').classList.toggle('active', rankingsOpen);
+  if(rankingsOpen) renderRankings();
+}
+document.getElementById('rankings-toggle').addEventListener('click', () => toggleRankings());
+document.getElementById('rankings-close').addEventListener('click', () => toggleRankings(false));
+
+function showTooltip(event, name, r){
+  const [mx,my] = d3.pointer(event, document.getElementById('map-wrap'));
+  tooltip.style("opacity",1).style("left",(mx+16)+"px").style("top",(my+10)+"px");
+  if(r){
+    tooltip.html(`<b>${name}</b><span class="score" style="color:${moodColor(r.score)}">${Math.round(r.score*100)}</span><br>
+      <span style="color:var(--muted)">${r.weather.label} · ${r.weather.tempC}°C</span>`);
+  } else {
+    tooltip.html(`<b>${name}</b><br><span style="color:var(--muted)">${worldFeatures ? "No live data for this country" : "Loading live data…"}</span>`);
+  }
+}
+
+// Load real country borders. If the primary CDN fails, try one fallback
+// mirror before giving up and staying on the bubble-map view.
+function loadWorldGeometry(url, fallbackUrl){
+  if(typeof topojson === "undefined"){
+    console.error("topojson-client library did not load — cannot build country outlines. Staying on bubble map.");
+    const sub = document.getElementById('status-sub');
+    sub.textContent += " · country outlines unavailable, showing dots";
+    return;
+  }
+  d3.json(url)
+    .then(topo => {
+      worldFeatures = topojson.feature(topo, topo.objects.countries).features;
+      refreshMapData();
+      const dot = document.getElementById('status-dot');
+      console.log("Country border geometry loaded:", worldFeatures.length, "countries");
+    })
+    .catch(err => {
+      console.error("Failed to load world border geometry from", url, err);
+      if(fallbackUrl){
+        loadWorldGeometry(fallbackUrl, null);
+      } else {
+        console.error("All geometry sources failed — staying on bubble map view.");
+        const sub = document.getElementById('status-sub');
+        sub.textContent += " · country outlines unavailable, showing dots";
+      }
+    });
+}
+loadWorldGeometry(
+  "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json",
+  "https://unpkg.com/world-atlas@2/countries-110m.json"
+);
+
+window.addEventListener("resize", sizeMap);
+sizeMap();
+
+document.getElementById('zoom-in').addEventListener('click', () => {
+  svg.transition().duration(250).call(zoomBehavior.scaleBy, 1.6);
+});
+document.getElementById('zoom-out').addEventListener('click', () => {
+  svg.transition().duration(250).call(zoomBehavior.scaleBy, 0.625);
+});
+
+/* ---------------------------------------------------------
+   LOAD ALL COUNTRIES (parallel, capped concurrency)
+--------------------------------------------------------- */
+
+async function loadCountry(c){
+  let weather, econ, pol;
+  try{
+    weather = await fetchWeather(c); // always live — fast, reliable, genuinely time-sensitive
+  }catch(e){
+    errorCount++; failedList.push(c); loadedCount++; updateStatus(); refreshMapData();
+    return; // no weather = no country at all
+  }
+
+  const cachedNews = newsCache && newsCache.news && newsCache.news[c.name];
+  let newsBlocked;
+  if(cachedNews){
+    econ = cachedNews.econ; pol = cachedNews.pol;
+    newsBlocked = !!(econ.unavailable || pol.unavailable);
+  } else {
+    // News sentiment is best-effort: if GDELT is unreachable on this network,
+    // fall back to a neutral placeholder tone rather than dropping the country.
+    const [econResult, polResult] = await Promise.allSettled([
+      fetchTone(c.fips, "economy OR inflation OR jobs OR markets"),
+      fetchTone(c.fips, "government OR election OR parliament OR political"),
+    ]);
+    newsBlocked = econResult.status !== "fulfilled" || !econResult.value
+               || polResult.status !== "fulfilled" || !polResult.value;
+    econ = (econResult.status === "fulfilled" && econResult.value) ? econResult.value : {tone:0, mood:0.5, unavailable:true};
+    pol  = (polResult.status === "fulfilled" && polResult.value)  ? polResult.value  : {tone:0, mood:0.5, unavailable:true};
+  }
+
+  const baseline = baselineFor(c.name);
+  const baselineMood = baseline.score / 10;
+  const disaster = disasterFor(c.name);
+  // Baseline still carries most of the weight (this is measured wellbeing,
+  // not a guess); weather/news/disasters nudge the score day-to-day.
+  // Recent major earthquakes (and any tsunami they triggered) now pull the
+  // score down for affected countries, decaying back to neutral over ~30 days.
+  const score = baselineMood*0.50 + weather.mood*0.12 + econ.mood*0.12 + pol.mood*0.12 + disaster.mood*0.14;
+  const record = {weather, econ, pol, baseline, disaster, score, newsBlocked};
+  results[c.name] = record;
+  resultsByGeoName[geoNameFor(c.name)] = record;
+  if(newsBlocked) newsUnavailable = true;
+  loadedCount++;
+  updateStatus();
+  refreshMapData();
+}
+
+function hideSplash(){
+  const splash = document.getElementById('splash');
+  if(splash && !splash.classList.contains('hidden')) splash.classList.add('hidden');
+}
+
+function updateStatus(){
+  const total = COUNTRIES.length;
+  const sourceAgeMs = precomputedSource ? Date.now() - precomputedSource.savedAt
+                     : newsCache ? Date.now() - newsCache.savedAt
+                     : null;
+  const cacheNote = sourceAgeMs !== null
+    ? (precomputedSource ? ` · index computed ${Math.round(sourceAgeMs/60000)}m ago` : ` · news/disasters cached ${Math.round(sourceAgeMs/60000)}m ago`)
+    : "";
+  document.getElementById('status-sub').textContent = `${loadedCount} / ${total} countries${cacheNote}`;
+  const dot = document.getElementById('status-dot');
+  const spinner = document.getElementById('status-spinner');
+  const text = document.getElementById('status-text');
+  const retryBtn = document.getElementById('retry');
+  if(precomputedSource){
+    spinner.classList.remove('spinning');
+    dot.style.display = "";
+    dot.className = "dot live";
+    text.textContent = "Precomputed index";
+    retryBtn.style.display = "none";
+  } else if(loadedCount < total){
+    spinner.classList.add('spinning');
+    dot.style.display = "none";
+    text.textContent = "Loading live data…";
+    retryBtn.style.display = "none";
+  } else {
+    spinner.classList.remove('spinning');
+    dot.style.display = "";
+    dot.className = errorCount > total*0.4 ? "dot err" : (newsUnavailable ? "dot" : "dot live");
+    text.textContent = errorCount > total*0.4
+      ? "Some sources unavailable"
+      : newsUnavailable
+        ? "Live weather · news tone unreachable on this network"
+        : "Live — weather + news tone";
+    retryBtn.style.display = failedList.length ? "inline-block" : "none";
+  }
+  // The stuck-banner watchdog fires once at 10s if nothing had loaded yet —
+  // but loading can legitimately start a little after that (slow first
+  // request, worker cold-start, etc). As soon as data is actually coming
+  // in, the banner's premise is wrong, so dismiss it.
+  if(loadedCount > 0){
+    const banner = document.getElementById('stuck-banner');
+    if(banner) banner.style.display = 'none';
+  }
+  // Once enough countries are on the map to be useful, drop the splash —
+  // the rest continues loading in the background rather than blocking the view.
+  if(loadedCount >= Math.min(15, total) || loadedCount === total){
+    hideSplash();
+  }
+}
+
+async function loadAll(list){
+  const CONCURRENCY = 6;
+  let idx = 0;
+  async function worker(){
+    while(idx < list.length){
+      const c = list[idx++];
+      await loadCountry(c);
+    }
+  }
+  await Promise.all(Array.from({length: CONCURRENCY}, worker));
+}
+
+document.getElementById('retry').addEventListener('click', () => {
+  const toRetry = failedList;
+  failedList = [];
+  errorCount -= toRetry.length;
+  loadAll(toRetry);
+});
+
+// ---------------------------------------------------------------
+// PRECOMPUTED INDEX — the primary, fast path. fetch_news_data.py (run a
+// few times a day via GitHub Actions — see github-actions-setup/) computes
+// the ENTIRE composite score server-side (baseline + weather + news +
+// disasters) and writes mood-index-data.json. When that file is present,
+// the page just loads it and renders directly — no live API calls at all,
+// which is what makes page load fast and snappy. Two candidate locations
+// are tried, both same-origin-safe (a direct static-file GET, not a
+// CORS-dependent API call): a local file and/or a GitHub raw URL.
+//
+// Fill in REMOTE_DATA_URL once your GitHub Actions repo is set up (see
+// github-actions-setup/README.md); leave it blank to check only the local
+// file. If neither is available, the page falls back to the slower
+// live-fetch path below (useful during development, or if the precomputed
+// pipeline isn't set up yet).
+// ---------------------------------------------------------------
+const LOCAL_DATA_FILE = "mood-index-data.json";
+const REMOTE_DATA_URL = ""; // e.g. "https://raw.githubusercontent.com/yourname/mood-map-data/main/mood-index-data.json"
+const PRECOMPUTED_MAX_AGE_MS = 24 * 60 * 60 * 1000; // still use it even if stale, up to a day old
+
+async function tryLoadDataFrom(url, label){
+  try{
+    const res = await fetch(url + (url.includes("?") ? "&" : "?") + "_=" + Date.now(), {cache:"no-store"});
+    if(!res.ok) return null;
+    const data = await res.json();
+    if(!data || !data.savedAt || !data.countries) return null;
+    const ageMs = Date.now() - data.savedAt;
+    if(ageMs > PRECOMPUTED_MAX_AGE_MS){
+      console.warn(`[${label}] data is ${Math.round(ageMs/3600000)}h old — ignoring, is the GitHub Action running?`);
+      return null;
+    }
+    console.log(`[${label}] using precomputed index (${Math.round(ageMs/60000)}m old, ${Object.keys(data.countries).length} countries).`);
+    return data;
+  }catch(e){
+    return null; // missing/unreadable — expected until set up; fall through silently
+  }
+}
+
+async function loadPrecomputedIndex(){
+  const local = await tryLoadDataFrom(LOCAL_DATA_FILE, "local data");
+  if(local) return local;
+  if(REMOTE_DATA_URL) return await tryLoadDataFrom(REMOTE_DATA_URL, "GitHub data");
+  return null;
+}
+
+// FAST PATH: data.countries already has each country's full computed
+// record (score, baseline, weather, econ, pol, disaster) — just drop it
+// straight into results/resultsByGeoName and render. No network calls,
+// no per-country loop, no waiting.
+function applyPrecomputedIndex(data){
+  Object.entries(data.countries).forEach(([name, record]) => {
+    results[name] = record;
+    resultsByGeoName[geoNameFor(name)] = record;
+    if(record.newsBlocked) newsUnavailable = true;
+  });
+  loadedCount = Object.keys(data.countries).length;
+  errorCount = 0;
+  precomputedSource = {savedAt: data.savedAt};
+  updateStatus();
+  refreshMapData();
+  hideSplash();
+}
+
+let precomputedSource = null; // {savedAt} when rendering from the fast path, else null
+
+async function runFullLoadCycle(forceFresh){
+  // Always check the precomputed index, regardless of forceFresh — it's
+  // fetched with a cache-busting param every time anyway, so there's never
+  // a reason to skip straight to the slower live-fetch fallback if a good
+  // precomputed file exists. forceFresh only matters below, for the
+  // localStorage-cache fallback tier.
+  const precomputed = await loadPrecomputedIndex();
+  if(precomputed){
+    applyPrecomputedIndex(precomputed);
+    return; // fast path — nothing else to do, no live fetching at all
+  }
+
+  // Fallback: no precomputed index available (not set up yet, or stale
+  // beyond a day) — do the slower live browser-side fetch, same as before.
+  precomputedSource = null;
+  newsCache = forceFresh ? null : loadCacheFromStorage();
+  if(newsCache){
+    disasterByCountry = newsCache.disasters || {};
+    disastersReady = true;
+  } else {
+    disasterByCountry = {};
+    await fetchGlobalDisasters();
+  }
+  await loadAll(COUNTRIES);
+  saveCacheToStorage();
+  if(newsCache) saveCacheAtOriginalTimestamp();
+}
+
+// If we served from cache, don't reset the cache's age on every reload —
+// only a real fetch should extend the 1-hour window. Restore the original
+// savedAt after saveCacheToStorage() wrote a fresh one above.
+function saveCacheAtOriginalTimestamp(){
+  try{
+    const raw = localStorage.getItem(CACHE_KEY);
+    if(!raw || !newsCache) return;
+    const parsed = JSON.parse(raw);
+    parsed.savedAt = newsCache.savedAt;
+    localStorage.setItem(CACHE_KEY, JSON.stringify(parsed));
+  }catch(e){ /* non-critical */ }
+}
+
+runFullLoadCycle(false);
+
+// While this tab stays open, re-check every hour. The GitHub Actions
+// workflow only updates the precomputed index a few times a day, so most
+// of these checks will just confirm nothing changed yet (cheap — one
+// small file fetch) — but whenever it HAS updated, the page will pick up
+// the newer data without needing a manual reload. If no precomputed index
+// exists at all, forceFresh bypasses the localStorage cache and forces a
+// real live fetch instead.
+setInterval(() => {
+  console.log("[hourly refresh] re-checking precomputed index…");
+  runFullLoadCycle(true);
+}, CACHE_TTL_MS);
+
+// Splash never blocks indefinitely: force it away after 12s even if very
+// little has loaded yet, handing off to the stuck-banner watchdog below
+// for the "network is fully blocked" case.
+setTimeout(hideSplash, 12000);
+
+// Watchdog: if nothing has loaded after 16s, something is likely blocking
+// fetch entirely (commonly file:// origin restrictions). Long enough to
+// tolerate a slow first request (Worker cold-start, etc), and updateStatus()
+// dismisses this immediately once any country actually loads.
+setTimeout(() => {
+  if(loadedCount === 0){
+    document.getElementById('stuck-banner').style.display = 'block';
+  }
+}, 16000);
+
+function hashSeed(str){
+  let h = 1779033703 ^ str.length;
+  for(let i=0;i<str.length;i++){
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function(){
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+}
+
+document.getElementById('use-demo').addEventListener('click', () => {
+  document.getElementById('stuck-banner').style.display = 'none';
+  hideSplash();
+  const weatherOptions = [
+    ["Clear sky",0.85],["Partly cloudy",0.62],["Overcast",0.45],["Light rain",0.42],
+    ["Rain",0.35],["Snow",0.42],["Thunderstorm",0.2],["Mainly clear",0.78],
+  ];
+  COUNTRIES.forEach(c => {
+    if(results[c.name]) return;
+    const rng = hashSeed(c.name);
+    const w = weatherOptions[Math.floor(rng()*weatherOptions.length)];
+    const tempC = Math.round(-5 + rng()*35);
+    const econMood = Math.max(0.05, Math.min(0.95, rng()));
+    const polMood = Math.max(0.05, Math.min(0.95, rng()));
+    const baseline = baselineFor(c.name);
+    const baselineMood = baseline.score / 10;
+    const disaster = disasterFor(c.name); // real, if the USGS fetch succeeded — no need to fake this part
+    const score = baselineMood*0.50 + w[1]*0.12 + econMood*0.12 + polMood*0.12 + disaster.mood*0.14;
+    const record = {
+      weather:{label:w[0], tempC, mood:w[1]},
+      econ:{tone:(econMood-0.5)*12, mood:econMood},
+      pol:{tone:(polMood-0.5)*12, mood:polMood},
+      baseline, disaster, score, demo:true
+    };
+    results[c.name] = record;
+    resultsByGeoName[geoNameFor(c.name)] = record;
+    loadedCount++;
+  });
+  errorCount = 0; failedList = [];
+  updateStatus();
+  refreshMapData();
+  document.getElementById('status-text').textContent = "Demo data (not live)";
+});
+
+/* ---------------------------------------------------------
+   DETAIL PANEL
+--------------------------------------------------------- */
+function factorBar(score){
+  return `<div class="bar-track"><div class="bar-fill" style="width:${Math.round(score*100)}%;background:${moodColor(score)}"></div></div>`;
+}
+
+function selectCountry(d, r, mode){
+  if(!r) return;
+  if(mode === "country"){
+    g.selectAll("path.country").classed("selected", dd => dd.properties.name === d.name);
+  } else {
+    g.selectAll("circle.bubble").classed("selected", dd => dd.name === d.name);
+  }
+
+  // Figure out which of our tracked countries this record belongs to (map
+  // clicks pass the map's own label, which can differ from our list's name),
+  // then compute its rank so the list can highlight it and the panel can
+  // show "#N of M" regardless of whether this came from the map or the list.
+  const resultsKey = Object.keys(results).find(k => results[k] === r) || d.name;
+  selectedCountryName = resultsKey;
+  const sorted = Object.entries(results).sort((a,b) => b[1].score - a[1].score);
+  const rankIndex = sorted.findIndex(([,rec]) => rec === r);
+  const rankLabel = rankIndex >= 0 ? `#${rankIndex+1} of ${sorted.length}` : "";
+  if(rankingsOpen){
+    renderRankings();
+    const selectedRow = document.querySelector('.rank-row.selected');
+    if(selectedRow) selectedRow.scrollIntoView({block:'nearest'});
+  }
+  const detail = document.getElementById('detail');
+  detail.style.display = "block";
+  const scoreColor = moodColor(r.score);
+  const scoreOutOf10 = (r.score*10).toFixed(1);
+  const popValue = populationByCountry[resultsKey];
+  const popLabel = popValue !== undefined ? formatPopulation(popValue) + " people" : "population unavailable";
+
+  detail.innerHTML = `
+    <h2>${d.name}</h2>
+    <div class="rank" style="margin-bottom:2px;">Population: ${popLabel}</div>
+    <div class="rank">Composite mood score${rankLabel ? " · " + rankLabel : ""}</div>
+    <div class="score-num" style="color:${scoreColor}">${scoreOutOf10}</div>
+    <div class="score-label">out of 10</div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Wellbeing baseline</span><span class="val">${r.baseline.score.toFixed(2)} / 10</span></div>
+      ${factorBar(r.baseline.score/10)}
+      <div class="factor-note">${r.baseline.reported ? "World Happiness Report (Gallup World Poll) life‑evaluation score." : "No individual WHR figure for this country — using a global‑average estimate."} · weighted 50%. <a href="https://worldhappiness.report/" target="_blank" rel="noopener">Source ↗</a></div>
+    </div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Weather</span><span class="val">${r.weather.label}, ${r.weather.tempC}°C</span></div>
+      ${factorBar(r.weather.mood)}
+      <div class="factor-note">Live current conditions · weighted 12%. <a href="${r.weather.sourceUrl}" target="_blank" rel="noopener">Open‑Meteo data ↗</a></div>
+    </div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Economic news</span><span class="val">${r.econ.unavailable ? "N/A" : Math.round(r.econ.mood*100)}</span></div>
+      ${factorBar(r.econ.mood)}
+      <div class="factor-note">${r.econ.unavailable ? "GDELT was unreachable on this network — showing neutral placeholder, not live data." : toneLabel(r.econ.mood) + " (avg. GDELT tone " + r.econ.tone.toFixed(1) + ", last 3 days)"} · weighted 12%.${r.econ.articlesUrl ? ` <a href="${r.econ.articlesUrl}" target="_blank" rel="noopener">View articles ↗</a>` : ""}</div>
+    </div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Political news</span><span class="val">${r.pol.unavailable ? "N/A" : Math.round(r.pol.mood*100)}</span></div>
+      ${factorBar(r.pol.mood)}
+      <div class="factor-note">${r.pol.unavailable ? "GDELT was unreachable on this network — showing neutral placeholder, not live data." : toneLabel(r.pol.mood) + " (avg. GDELT tone " + r.pol.tone.toFixed(1) + ", last 3 days)"} · weighted 12%.${r.pol.articlesUrl ? ` <a href="${r.pol.articlesUrl}" target="_blank" rel="noopener">View articles ↗</a>` : ""}</div>
+    </div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Recent disasters</span><span class="val">${r.disaster.events.length ? Math.round(r.disaster.mood*100) : "—"}</span></div>
+      ${factorBar(r.disaster.mood)}
+      <div class="factor-note">${
+        r.disaster.events.length === 0
+          ? "No significant disasters (major earthquakes, storms, floods, volcanic activity, or wildfires) in the past 30 days."
+          : r.disaster.events.map(ev =>
+              `${ev.label} ${ev.daysAgo === 0 ? "today" : ev.daysAgo + "d ago"} — ${ev.place}${ev.url ? ` <a href="${ev.url}" target="_blank" rel="noopener">↗</a>` : ""}`
+            ).join("<br>")
+      } · weighted 14%.</div>
+    </div>
+
+    <hr class="divider">
+    <footer>Baseline: World Happiness Report published rankings (Gallup World Poll life evaluations, 0–10 scale). Population: approximate published UN/national estimates, embedded directly (not live-fetched — population doesn't change meaningfully day-to-day). Weather: Open‑Meteo live forecast API. News tone: GDELT DOC 2.0 API, average sentiment of economy/politics articles from this country's sources, last 3 days. Disasters: USGS Earthquake API (earthquakes + tsunami-warning flag) plus GDACS (tropical cyclones, floods, volcanic activity, wildfires), orange/red-alert events in the past 30 days. Global tornado data isn't available from a free API, so tornadoes specifically aren't included. The baseline anchors the score; live signals shift it day‑to‑day.</footer>
+  `;
+}
+
+/* ---------------------------------------------------------
+   LEGEND
+--------------------------------------------------------- */
+(function buildLegend(){
+  const w = 220, h = 24;
+  const lsvg = d3.select("#legend-svg").attr("width", w).attr("height", h);
+  const defs = lsvg.append("defs");
+  const grad = defs.append("linearGradient").attr("id","moodGrad").attr("x1","0%").attr("x2","100%");
+  d3.range(0,1.001,0.1).forEach(s => grad.append("stop").attr("offset", `${s*100}%`).attr("stop-color", moodColor(s)));
+  lsvg.append("rect").attr("x",0).attr("y",4).attr("width",w).attr("height",9).attr("rx",4.5).attr("fill","url(#moodGrad)");
+  lsvg.append("text").attr("x",0).attr("y",23).attr("fill","var(--low)").attr("font-size",10).attr("font-family","Inter").text("Low");
+  lsvg.append("text").attr("x",w).attr("y",23).attr("text-anchor","end").attr("fill","var(--high)").attr("font-size",10).attr("font-family","Inter").text("High");
+})();
+</script>
+</body>
+</html>
