@@ -19,6 +19,9 @@ permissions:
 jobs:
   compute-index:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap — the script now runs countries in parallel and
+                           # should finish in a few minutes; this just guards against
+                           # a genuinely stuck run burning your Actions minutes forever
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
