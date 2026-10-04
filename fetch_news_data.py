@@ -24,6 +24,8 @@ import time
 import urllib.request
 import urllib.parse
 import urllib.error
+import re
+from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -55,6 +57,193 @@ WEATHER_CODE_MAP = {
     95: ("Thunderstorm", 0.2), 96: ("Thunderstorm w/ hail", 0.15), 99: ("Severe thunderstorm", 0.12),
 }
 GDACS_HAZARD_LABELS = {"TC": "Tropical cyclone", "FL": "Flood", "VO": "Volcanic activity", "WF": "Wildfire"}
+
+# ---------------------------------------------------------------
+# LONGEVITY — informational only, not part of the composite score.
+#
+# Life expectancy comes live from the World Bank API (free, no key), matched
+# by ISO3 country code. Taiwan isn't published by the World Bank, so it will
+# show as unavailable.
+#
+# Centenarian (100+) counts are static: official national statistics-office
+# figures compiled in Wikipedia's "Centenarian" article (the year of each
+# figure varies, 2011-2026, and is shown on the page), with Japan's taken from
+# its Ministry of Health, Labour and Welfare's Sept 2026 release. Only ~47
+# countries publish a usable national count; the rest are left out rather than
+# estimated. Counts can also be inflated by record-keeping errors, so treat
+# them as approximate. Counts per single year of age beyond 100 aren't
+# available in any open dataset used here, so they are not included.
+# ---------------------------------------------------------------
+ISO3 = {"United States":"USA","Canada":"CAN","Mexico":"MEX","Guatemala":"GTM","Honduras":"HND","El Salvador":"SLV","Nicaragua":"NIC","Costa Rica":"CRI","Panama":"PAN","Cuba":"CUB","Jamaica":"JAM","Dominican Rep.":"DOM","Trinidad and Tobago":"TTO","Brazil":"BRA","Argentina":"ARG","Chile":"CHL","Colombia":"COL","Peru":"PER","Uruguay":"URY","Paraguay":"PRY","Bolivia":"BOL","Ecuador":"ECU","Venezuela":"VEN","Guyana":"GUY","Suriname":"SUR","United Kingdom":"GBR","France":"FRA","Germany":"DEU","Spain":"ESP","Italy":"ITA","Portugal":"PRT","Netherlands":"NLD","Belgium":"BEL","Switzerland":"CHE","Austria":"AUT","Sweden":"SWE","Norway":"NOR","Denmark":"DNK","Finland":"FIN","Iceland":"ISL","Poland":"POL","Ukraine":"UKR","Russia":"RUS","Greece":"GRC","Turkey":"TUR","Ireland":"IRL","Czechia":"CZE","Slovakia":"SVK","Hungary":"HUN","Romania":"ROU","Bulgaria":"BGR","Serbia":"SRB","Croatia":"HRV","Slovenia":"SVN","Bosnia and Herz.":"BIH","Albania":"ALB","North Macedonia":"MKD","Lithuania":"LTU","Latvia":"LVA","Estonia":"EST","Belarus":"BLR","Moldova":"MDA","Cyprus":"CYP","Luxembourg":"LUX","Egypt":"EGY","Nigeria":"NGA","South Africa":"ZAF","Kenya":"KEN","Morocco":"MAR","Algeria":"DZA","Tunisia":"TUN","Libya":"LBY","Ethiopia":"ETH","Ghana":"GHA","Côte d'Ivoire":"CIV","Senegal":"SEN","Cameroon":"CMR","Angola":"AGO","Zambia":"ZMB","Zimbabwe":"ZWE","Mozambique":"MOZ","Namibia":"NAM","Botswana":"BWA","Uganda":"UGA","Tanzania":"TZA","Saudi Arabia":"SAU","United Arab Emirates":"ARE","Israel":"ISR","Iran":"IRN","Iraq":"IRQ","Jordan":"JOR","Lebanon":"LBN","Syria":"SYR","Yemen":"YEM","Oman":"OMN","Qatar":"QAT","Kuwait":"KWT","Afghanistan":"AFG","India":"IND","Pakistan":"PAK","Bangladesh":"BGD","Sri Lanka":"LKA","Nepal":"NPL","Myanmar":"MMR","China":"CHN","Mongolia":"MNG","Japan":"JPN","South Korea":"KOR","North Korea":"PRK","Taiwan":"TWN","Indonesia":"IDN","Thailand":"THA","Vietnam":"VNM","Cambodia":"KHM","Laos":"LAO","Philippines":"PHL","Malaysia":"MYS","Singapore":"SGP","Australia":"AUS","New Zealand":"NZL","Papua New Guinea":"PNG","Kazakhstan":"KAZ","Benin":"BEN","Burkina Faso":"BFA","Burundi":"BDI","Cabo Verde":"CPV","Central African Republic":"CAF","Chad":"TCD","Comoros":"COM","Republic of the Congo":"COG","Democratic Republic of the Congo":"COD","Djibouti":"DJI","Equatorial Guinea":"GNQ","Eritrea":"ERI","Eswatini":"SWZ","Gabon":"GAB","Gambia":"GMB","Guinea":"GIN","Guinea-Bissau":"GNB","Lesotho":"LSO","Liberia":"LBR","Madagascar":"MDG","Malawi":"MWI","Mali":"MLI","Mauritania":"MRT","Mauritius":"MUS","Niger":"NER","Rwanda":"RWA","Sao Tome and Principe":"STP","Seychelles":"SYC","Sierra Leone":"SLE","Somalia":"SOM","South Sudan":"SSD","Sudan":"SDN","Togo":"TGO"}
+
+# name: (centenarian count, year of the figure)
+CENTENARIANS = {
+    "Argentina": (6043, 2025), "Australia": (7345, 2025), "Austria": (1841, 2026), "Belgium": (3172, 2025),
+    "Brazil": (37814, 2022), "Bulgaria": (353, 2022), "Cambodia": (3143, 2019), "Canada": (12281, 2025),
+    "China": (54166, 2013), "Colombia": (19400, 2023), "Croatia": (944, 2023), "Czechia": (977, 2024),
+    "Denmark": (1224, 2025), "Estonia": (255, 2026), "Finland": (1153, 2023), "France": (37000, 2025),
+    "Germany": (17901, 2024), "Hungary": (906, 2023), "Iceland": (47, 2023), "India": (27000, 2015),
+    "Ireland": (956, 2023), "Israel": (3328, 2022), "Italy": (24710, 2026), "Japan": (107677, 2026),
+    "Malaysia": (2296, 2024), "Mexico": (18295, 2020), "Netherlands": (2583, 2025), "New Zealand": (1078, 2024),
+    "Norway": (1382, 2026), "Peru": (2707, 2013), "Poland": (7387, 2023), "Portugal": (4143, 2025),
+    "Romania": (3713, 2026), "Russia": (22600, 2020), "Singapore": (1500, 2020), "Slovenia": (388, 2025),
+    "Slovakia": (401, 2021), "South Africa": (22525, 2023), "South Korea": (8891, 2025), "Spain": (19573, 2022),
+    "Sweden": (2961, 2024), "Switzerland": (1948, 2023), "Thailand": (45561, 2024), "Turkey": (8290, 2025),
+    "United Kingdom": (16600, 2024), "United States": (119182, 2025), "Uruguay": (519, 2011),
+}
+
+WB_LIFE_EXPECTANCY_INDICATORS = {
+    "total": "SP.DYN.LE00.IN", "male": "SP.DYN.LE00.MA.IN", "female": "SP.DYN.LE00.FE.IN",
+}
+
+
+def fetch_life_expectancy():
+    """World Bank life expectancy at birth, most recent non-empty value per
+    country. Returns {iso3: {"total":..., "male":..., "female":..., "year":...}}.
+    If the request fails, returns whatever was gathered — the page simply shows
+    life expectancy as unavailable for those countries."""
+    result = {}
+    for key, indicator in WB_LIFE_EXPECTANCY_INDICATORS.items():
+        url = (f"https://api.worldbank.org/v2/country/all/indicator/{indicator}"
+               f"?format=json&per_page=1000&mrnev=1")
+        try:
+            data = fetch_json(url, timeout=30)
+            rows = data[1] if isinstance(data, list) and len(data) > 1 and data[1] else []
+            for row in rows:
+                iso3, value = row.get("countryiso3code"), row.get("value")
+                if not iso3 or value is None:
+                    continue
+                entry = result.setdefault(iso3, {})
+                entry[key] = round(float(value), 1)
+                if key == "total":
+                    entry["year"] = row.get("date")
+            print(f"  ok — life expectancy ({key}): {len(rows)} rows")
+        except Exception as e:
+            print(f"  ! World Bank {key} life expectancy fetch failed: {e}")
+    return result
+
+
+# ---------------------------------------------------------------
+# OLDEST LIVING PERSON per country — informational, not part of the score.
+#
+# Fetched live on every run from the Gerontology Research Group's ranking of
+# validated living supercentenarians (110+), because people this old die often
+# and a static copy would go stale within weeks. Each person is assigned to
+# their country of last residence and the earliest birth date per country is
+# kept. Only the birth date is stored (the page computes the current age from
+# it) — no names. Countries with no validated person simply have no entry.
+#
+# The GRG list can lag other validators. SUPPLEMENTAL_OLDEST holds the few
+# cases found where Wikipedia's per-country lists show an older validated
+# person who is missing from the GRG list; each is only used when it is older
+# than the GRG entry, and it is labelled with its "as of" date.
+# ---------------------------------------------------------------
+GRG_URL = "https://www.grg-supercentenarians.org/world-supercentenarian-rankings-list/"
+GRG_NAME_ALIASES = {
+    "UK": "United Kingdom", "USA": "United States", "Dominican Republic": "Dominican Rep.",
+    "Czech Republic": "Czechia", "Bosnia and Herzegovina": "Bosnia and Herz.",
+    "Ivory Coast": "Côte d'Ivoire", "Cote d'Ivoire": "Côte d'Ivoire", "Cape Verde": "Cabo Verde",
+}
+SUPPLEMENTAL_OLDEST = {
+    "Brazil": {"born": "1911-06-21", "asOf": "2026-09-27",
+               "source": "Wikipedia: List of the verified oldest people",
+               "url": "https://en.wikipedia.org/wiki/List_of_the_verified_oldest_people"},
+    "Spain": {"born": "1913-07-29", "asOf": "2026-09-27",
+              "source": "Wikipedia: List of Spanish supercentenarians",
+              "url": "https://en.wikipedia.org/wiki/List_of_Spanish_supercentenarians"},
+}
+
+
+def fetch_text(url, timeout=REQUEST_TIMEOUT_SEC):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; GlobalMoodMapCollector/1.0)"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+class _TableRows(HTMLParser):
+    """Collects the text of every cell of every table row, ignoring markup."""
+    def __init__(self):
+        super().__init__()
+        self.rows, self._row, self._cell = [], None, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = []
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self._row is not None and self._cell is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            self.rows.append(self._row)
+            self._row = None
+
+
+def parse_grg_oldest(html_text, known_names, today=None):
+    """Return {country: earliest ISO birth date} from the GRG table HTML."""
+    today = today or datetime.now(timezone.utc).date()
+    parser = _TableRows()
+    parser.feed(html_text)
+    oldest = {}
+    for cells in parser.rows:
+        if len(cells) < 8:
+            continue
+        born, residence = cells[2], cells[7]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", born):
+            continue
+        try:
+            born_date = datetime.strptime(born, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        age_years = (today - born_date).days / 365.25
+        if not (105 <= age_years <= 125):   # sanity: this is a supercentenarian list
+            continue
+        country = residence.split(" (")[0].strip()
+        country = GRG_NAME_ALIASES.get(country, country)
+        if country not in known_names:
+            continue
+        if country not in oldest or born < oldest[country]:
+            oldest[country] = born
+    return oldest
+
+
+def fetch_oldest_living():
+    """{country: {"born", "source", "url", ["asOf"]}} — GRG live, plus any
+    older supplemental entries. Returns {} if the GRG page can't be read."""
+    known = {c["name"] for c in COUNTRIES}
+    result = {}
+    try:
+        grg = parse_grg_oldest(fetch_text(GRG_URL, timeout=30), known)
+        for country, born in grg.items():
+            result[country] = {"born": born, "source": "Gerontology Research Group", "url": GRG_URL}
+        print(f"  ok — GRG list: oldest living person found for {len(grg)} countries")
+        if not grg:
+            print("  ! GRG page parsed but no rows matched — has the page layout changed?")
+    except Exception as e:
+        print(f"  ! GRG list fetch failed: {e}")
+    for country, entry in SUPPLEMENTAL_OLDEST.items():
+        if country not in result or entry["born"] < result[country]["born"]:
+            result[country] = dict(entry)
+    return result
+
+
+def longevity_for(name, life_exp, oldest=None):
+    le = life_exp.get(ISO3.get(name), {})
+    cent = CENTENARIANS.get(name)
+    return {
+        "lifeExpectancy": le.get("total"),
+        "lifeExpectancyMale": le.get("male"),
+        "lifeExpectancyFemale": le.get("female"),
+        "lifeExpectancyYear": le.get("year"),
+        "centenarians": {"count": cent[0], "year": cent[1]} if cent else None,
+        "oldestLiving": (oldest or {}).get(name),
+    }
 
 
 def fetch_json(url, timeout=REQUEST_TIMEOUT_SEC):
@@ -258,6 +447,12 @@ def main():
 
     disasters = fetch_disasters()
 
+    print("\nFetching life expectancy (World Bank)...")
+    life_exp = fetch_life_expectancy()
+
+    print("\nFetching oldest living person per country (GRG)...")
+    oldest_living = fetch_oldest_living()
+
     print(f"\nComputing full index for {len(COUNTRIES)} countries "
           f"({COUNTRY_WORKERS} in parallel, GDELT capped at {GDELT_MAX_CONCURRENT} concurrent)...")
     countries_out = {}
@@ -270,6 +465,7 @@ def main():
             done += 1
             elapsed = time.time() - start_time
             if record:
+                record["longevity"] = longevity_for(name, life_exp, oldest_living)
                 countries_out[name] = record
                 print(f"[{done}/{len(COUNTRIES)}] {name} — score {record['score']*10:.1f}/10 ({elapsed:.0f}s elapsed)")
             else:

@@ -66,3 +66,33 @@ commits pile up in the repo's history.
 Want a different schedule? Edit the `cron:` line in
 `.github/workflows/fetch-data.yml` — e.g. `"0 8,14,20 * * *"` for three
 specific times a day, or `"0 */4 * * *"` for every 4 hours.
+
+## Longevity data (life expectancy and centenarians)
+
+Each country's record also carries informational longevity data — shown in
+the detail panel, **not** part of the mood score:
+
+- **Life expectancy** (total, men, women) is pulled live from the World
+  Bank API on every run. Taiwan isn't published by the World Bank, so it
+  shows as unavailable.
+- **Centenarians (100+)** are a static table in `fetch_news_data.py`
+  (`CENTENARIANS`): official national statistics-office figures, each with
+  the year it was published (2011–2026). Only ~47 countries publish a usable
+  national count; the rest show "N/A" rather than an estimate. To update a
+  figure, edit that table and push.
+- Counts for each single year beyond 100 (101, 102, …) aren't published in
+  any open dataset, so they are not included.
+- **Oldest living person** is refreshed on every run from the Gerontology
+  Research Group's list of validated living supercentenarians (110+), by
+  country of last residence. Only the birth date is stored — the page works
+  out the current age itself, and no names are kept. Only about 25 countries
+  have a validated person; the rest show "N/A". If the GRG list can't be
+  read on a run, only the two hand-added entries below are kept for that run.
+  - `SUPPLEMENTAL_OLDEST` in `fetch_news_data.py` holds Brazil and Spain,
+    where Wikipedia's lists show an older validated person than the GRG list
+    does (different organisations validate different people). These are
+    static, labelled with an "as of" date, and need a manual update if that
+    person dies — check them occasionally.
+
+After pushing the updated script, run the workflow once from the Actions
+tab so `mood-index-data.json` picks up the new fields.

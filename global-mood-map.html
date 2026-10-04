@@ -573,6 +573,19 @@ const populationByCountry = {
   "Togo":8800000,
 };
 
+// Current age from an ISO birth date, as completed years + days since the
+// last birthday (UTC). `now` is injectable so it can be tested.
+function ageFromBirth(iso, now = new Date()){
+  const b = new Date(iso + "T00:00:00Z");
+  let years = now.getUTCFullYear() - b.getUTCFullYear();
+  let last = new Date(Date.UTC(now.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate()));
+  if(last > now){
+    years--;
+    last = new Date(Date.UTC(now.getUTCFullYear() - 1, b.getUTCMonth(), b.getUTCDate()));
+  }
+  return {years, days: Math.floor((now - last) / 86400000)};
+}
+
 function formatPopulation(n){
   if(n === undefined) return null;
   if(n >= 1e9) return (n/1e9).toFixed(2) + "B";
@@ -1431,6 +1444,56 @@ function selectCountry(d, r, mode){
   const popValue = populationByCountry[resultsKey];
   const popLabel = popValue !== undefined ? formatPopulation(popValue) + " people" : "population unavailable";
 
+  // Longevity is informational (not part of the score). It comes from the
+  // precomputed index (World Bank life expectancy + official centenarian
+  // counts), so it's absent when the page is running on the live-fetch fallback.
+  const lg = r.longevity;
+  let longevityHtml = "";
+  if(lg){
+    const lifeVal = (lg.lifeExpectancy !== null && lg.lifeExpectancy !== undefined)
+      ? lg.lifeExpectancy.toFixed(1) + " yrs" : "N/A";
+    const sexSplit = (lg.lifeExpectancyMale != null && lg.lifeExpectancyFemale != null)
+      ? `Men ${lg.lifeExpectancyMale.toFixed(1)} · women ${lg.lifeExpectancyFemale.toFixed(1)}. ` : "";
+    const lifeNote = lifeVal === "N/A"
+      ? "The World Bank doesn't publish life expectancy for this country."
+      : `${sexSplit}Life expectancy at birth, World Bank${lg.lifeExpectancyYear ? ", " + lg.lifeExpectancyYear : ""}. <a href="https://data.worldbank.org/indicator/SP.DYN.LE00.IN" target="_blank" rel="noopener">Source ↗</a>`;
+    const cent = lg.centenarians;
+    const centVal = cent ? cent.count.toLocaleString() : "N/A";
+    const centNote = cent
+      ? `Official national figure for ${cent.year}${cent.year < 2018 ? " (older figure — may be well out of date)" : ""}; counts can be inflated by record-keeping errors. <a href="https://en.wikipedia.org/wiki/Centenarian" target="_blank" rel="noopener">Sources ↗</a>`
+      : "No official national count found in the sources used.";
+    // Hide this block entirely when the field is absent (JSON from before the
+    // data pipeline started including it) — "N/A" would wrongly imply "none found".
+    let oldestHtml = "";
+    if("oldestLiving" in lg){
+      const ol = lg.oldestLiving;
+      let oldestVal = "N/A";
+      let oldestNote = "No validated record found — ages of people 110+ must be validated by researchers, and most countries have none published.";
+      if(ol){
+        const a = ageFromBirth(ol.born);
+        oldestVal = `${a.years} yrs ${a.days} d`;
+        oldestNote = `Oldest known living person with a validated age (${ol.source}${ol.asOf ? ", as of " + ol.asOf : ""}). People this old die often, so this person may have died since the last data refresh. <a href="${ol.url}" target="_blank" rel="noopener">Source ↗</a>`;
+      }
+      oldestHtml = `
+    <div class="factor">
+      <div class="factor-top"><span class="name">Oldest living person</span><span class="val">${oldestVal}</span></div>
+      <div class="factor-note">${oldestNote}</div>
+    </div>`;
+    }
+    longevityHtml = `
+    <hr class="divider">
+    <div class="factor">
+      <div class="factor-top"><span class="name">Life expectancy</span><span class="val">${lifeVal}</span></div>
+      <div class="factor-note">${lifeNote} Informational — not part of the score.</div>
+    </div>
+
+    <div class="factor">
+      <div class="factor-top"><span class="name">Centenarians (100+)</span><span class="val">${centVal}</span></div>
+      <div class="factor-note">${centNote} Counts for each single year beyond 100 (101, 102…) aren't published in any open dataset used here.</div>
+    </div>
+${oldestHtml}`;
+  }
+
   detail.innerHTML = `
     <h2>${d.name}</h2>
     <div class="rank" style="margin-bottom:2px;">Population: ${popLabel}</div>
@@ -1474,8 +1537,10 @@ function selectCountry(d, r, mode){
       } · weighted 14%.</div>
     </div>
 
+    ${longevityHtml}
+
     <hr class="divider">
-    <footer>Baseline: World Happiness Report published rankings (Gallup World Poll life evaluations, 0–10 scale). Population: approximate published UN/national estimates, embedded directly (not live-fetched — population doesn't change meaningfully day-to-day). Weather: Open‑Meteo live forecast API. News tone: GDELT DOC 2.0 API, average sentiment of economy/politics articles from this country's sources, last 3 days. Disasters: USGS Earthquake API (earthquakes + tsunami-warning flag) plus GDACS (tropical cyclones, floods, volcanic activity, wildfires), orange/red-alert events in the past 30 days. Global tornado data isn't available from a free API, so tornadoes specifically aren't included. The baseline anchors the score; live signals shift it day‑to‑day.</footer>
+    <footer>Baseline: World Happiness Report published rankings (Gallup World Poll life evaluations, 0–10 scale). Population: approximate published UN/national estimates, embedded directly (not live-fetched — population doesn't change meaningfully day-to-day). Weather: Open‑Meteo live forecast API. News tone: GDELT DOC 2.0 API, average sentiment of economy/politics articles from this country's sources, last 3 days. Disasters: USGS Earthquake API (earthquakes + tsunami-warning flag) plus GDACS (tropical cyclones, floods, volcanic activity, wildfires), orange/red-alert events in the past 30 days. Global tornado data isn't available from a free API, so tornadoes specifically aren't included. Life expectancy: World Bank (SP.DYN.LE00.IN). Centenarian counts: official national statistics offices as compiled in Wikipedia's “Centenarian” article (Japan: Ministry of Health, Labour and Welfare). Oldest living person: Gerontology Research Group's validated list of living supercentenarians (110+), refreshed with each data run. The baseline anchors the score; live signals shift it day‑to‑day.</footer>
   `;
 }
 
